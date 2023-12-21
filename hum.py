@@ -12,6 +12,7 @@ from PyQt5.Qt import Qt, QCoreApplication, QSpinBox
 from scipy import signal
 import wave
 import numpy as np
+import datetime
 
 
 def pmcc(x, y):
@@ -150,8 +151,9 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
 class EnfModel():
     def __init__(self):
         self.data = None
-        self.nominal_freq = 50
-        self.freq_band_size = 0.2
+        #self.nominal_freq = 50
+        #self.freq_band_size = 0.2
+        #self.t0 = datetime.datetime(0, 0, 0)
 
 
     def fromWaveFile(self, fpath):
@@ -168,17 +170,23 @@ class EnfModel():
             print(f"File {fpath}: Sample freqeuncy {self.fs} Hz, duration {clip_len_s} seconds")
 
 
-    def makeEnf(self, harmonic=1):
+    def makeEnf(self, nominal_freq, freq_band_size, harmonic):
         """ Creates an ENF series from the sample data. """
         assert(self.data is not None)
-        self.enf_output = enf_series(self.data, self.fs, self.nominal_freq,
-                                     self.freq_band_size, harmonic_n=harmonic)
+        self.nominal_freq = nominal_freq
+        self.freq_band_size = freq_band_size
+        self.harmonic = harmonic
+        self.enf_output = enf_series(self.data, self.fs, nominal_freq,
+                                     freq_band_size, harmonic_n=harmonic)
         self.sft = self.enf_output['stft']
         self.enf = self.enf_output['enf']
         # print(self.enf[0:5])
 
 
     def match(self, ref):
+        """Given a reference model with ENF values find the best fit with the
+        own ENF values.
+        """
         assert(type(ref) == EnfModel)
         pmccs = search(self.enf, ref.enf)
         print("Sample  Match")
@@ -228,6 +236,9 @@ class HumView(QMainWindow):
         analyse_group = QGroupBox("Analysis")
         analyse_area = QGridLayout()
         analyse_group.setLayout(analyse_area)
+        result_group = QGroupBox("Result")
+        result_area = QGridLayout()
+        result_group.setLayout(result_area)
 
         # Widget showing the ENF values of a grid and an audio recording
         #
@@ -246,6 +257,7 @@ class HumView(QMainWindow):
         main_layout.addWidget(audio_group)
         main_layout.addWidget(grid_group)
         main_layout.addWidget(analyse_group)
+        main_layout.addWidget(result_group)
 
         self.b_load = QPushButton("Load")
         self.b_load.clicked.connect(self.onOpenWavFile)
@@ -277,17 +289,34 @@ class HumView(QMainWindow):
         grid_area.addWidget(self.b_loadGridHistory, 2, 0)
         self.b_loadGridHistory.clicked.connect(self.onLoadGridHistory)
 
-        self.b_analyse = QPushButton("Analyse")
-        self.b_analyse.clicked.connect(self.onAnalyse)
-        analyse_area.addWidget(self.b_analyse, 0, 0)
-        analyse_area.addWidget(QLabel("Harmonic"), 0, 1)
+        analyse_area.addWidget(QLabel("Nominal freq"), 0, 0)
+        self.b_nominal_freq = QComboBox()
+        self.b_nominal_freq.addItems(("50", "60"))
+        analyse_area.addWidget(self.b_nominal_freq, 0, 1)
+        analyse_area.addWidget(QLabel("Band size (mHz)"), 0, 2)
+        self.b_band_size = QSpinBox()
+        self.b_band_size.setRange(0, 500)
+        self.b_band_size.setValue(200)
+        analyse_area.addWidget(self.b_band_size, 0, 3)
+        analyse_area.addWidget(QLabel("Harmonic"), 0, 4)
         self.b_harmonic = QSpinBox()
         self.b_harmonic.setRange(1, 10)
-        analyse_area.addWidget(self.b_harmonic, 0, 2)
+        analyse_area.addWidget(self.b_harmonic, 0, 5)
+        self.b_harmonic.setValue(2)
 
-        analyse_area.addWidget(QLabel("Result"), 1, 0)
-        self.e_result = QLineEdit()
-        analyse_area.addWidget(self.e_result, 1, 1)
+        self.b_analyse = QPushButton("Analyse")
+        self.b_analyse.clicked.connect(self.onAnalyse)
+        analyse_area.addWidget(self.b_analyse, 1, 0)
+
+        result_area.addWidget(QLabel("Offset (sec)"), 0, 0)
+        self.e_offset = QLineEdit()
+        result_area.addWidget(self.e_offset, 0, 1)
+        result_area.addWidget(QLabel("Date / time"), 0, 2)
+        self.e_date = QLineEdit()
+        result_area.addWidget(self.e_date, 0, 3)
+        result_area.addWidget(QLabel("Quality"), 0, 4)
+        self.e_quality = QLineEdit()
+        result_area.addWidget(self.e_quality, 0, 5)
 
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
@@ -327,7 +356,12 @@ class HumView(QMainWindow):
 
     def showMatches(self, matches):
         # print("Show matches")
-        self.e_result.setText(str(matches[0][0]))
+        x = matches[0][0]
+        duration = int(self.e_duration.text())
+
+        self.e_offset.setText(str(matches[0][0]))
+        self.e_quality.setText(str(matches[0][1]))
+        self.plotWidget.setXRange(x, x + duration, padding=1)
 
 
     def onOpenWavFile(self):
@@ -340,7 +374,9 @@ class HumView(QMainWindow):
                                                   "","WAV Files (*.wav);;all files (*)",
                                                   options=options)
         if fileName and fileName != '':
-            self.controller.loadAudioFile(fileName)
+            self.controller.loadAudioFile(fileName, int(self.b_nominal_freq.currentText()),
+                                float(self.b_band_size.value()/1000),
+                                int(self.b_harmonic.value()))
             self.e_fileName.setText(fileName)
 
         self.unsetCursor()
@@ -352,7 +388,9 @@ class HumView(QMainWindow):
         location = self.l_country.currentText()
         year = int(self.l_year.currentText())
         month = self.l_month.currentIndex()
-        self.controller.onLoadGridHistory(location, year, month)
+        self.controller.onLoadGridHistory(location, year, month, int(self.b_nominal_freq.currentText()),
+                                float(self.b_band_size.value()/1000),
+                                int(self.b_harmonic.value()))
         #self.gridHistory = GridHistoryModel(location, year, month)
 
         self.unsetCursor()
@@ -361,7 +399,7 @@ class HumView(QMainWindow):
     def onAnalyse(self):
         self.setCursor(Qt.WaitCursor)
 
-        harmonic = int(self.b_harmonic.value())
+        #harmonic = int(self.b_nominal_freq, self.b_band_size, self.b_harmonic.value())
         self.controller.onAnalyse()
 
         self.unsetCursor()
@@ -377,17 +415,17 @@ class HumController(QApplication):
     def show(self):
         self.view.show()
 
-    def loadAudioFile(self, fileName):
+    def loadAudioFile(self, fileName, nominal_freq, freq_band_size, harmonic):
         """ Create a model from an audio recoding and tell the view to show it."""
         self.model = EnfModel()
         self.model.fromWaveFile(fileName)
-        self.model.makeEnf(2)
+        self.model.makeEnf(nominal_freq, freq_band_size, harmonic)
         self.view.plotAudioRec(self.model)
 
-    def onLoadGridHistory(self, location, year, month):
+    def onLoadGridHistory(self, location, year, month, nominal_freq, freq_band_size, harmonic):
         self.gm = EnfModel()
         self.gm.fromWaveFile("71000_ref.wav")
-        self.gm.makeEnf()
+        self.gm.makeEnf(nominal_freq, freq_band_size, harmonic)
         self.view.plotGridHistory(self.gm)
 
     def onAnalyse(self):
