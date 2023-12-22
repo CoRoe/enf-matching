@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QVBoxLayout, QLineEdit, QFileDialog, QLabel,
                              QPushButton, QGroupBox, QGridLayout,
                              QComboBox, QSpinBox)
-from PyQt5.Qt import Qt 
+from PyQt5.Qt import Qt
 
 from scipy import signal
 import wave
@@ -152,6 +152,7 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
 class EnfModel():
     def __init__(self):
         self.data = None
+        self.enf = None
         #self.nominal_freq = 50
         #self.freq_band_size = 0.2
         #self.t0 = datetime.datetime(0, 0, 0)
@@ -166,9 +167,8 @@ class EnfModel():
             wav_buf = wav_f.readframes(wav_f.getnframes())
             self.data = np.frombuffer(wav_buf, dtype=np.int16)
             self.fs = wav_f.getframerate()
-
-            clip_len_s = len(self.data) / self.fs
-            print(f"File {fpath}: Sample freqeuncy {self.fs} Hz, duration {clip_len_s} seconds")
+            self.clip_len_s = len(self.data) / self.fs
+            print(f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds")
 
 
     def makeEnf(self, nominal_freq, freq_band_size, harmonic):
@@ -179,11 +179,11 @@ class EnfModel():
         self.harmonic = harmonic
         self.enf_output = enf_series(self.data, self.fs, nominal_freq,
                                      freq_band_size, harmonic_n=harmonic)
-        
+
         # stft is the Short-Term Fourier Transfrom of the autio file, computed
         # per second.
         self.stft = self.enf_output['stft']
-        
+
         # ENF are the ENF values
         self.enf = self.enf_output['enf']
         # print(self.enf[0:5])
@@ -195,21 +195,21 @@ class EnfModel():
         """
         assert(type(ref) == EnfModel)
         pmccs = search(self.enf, ref.enf)
-        print("Sample  Match")
-        #for i in range(10):
-        #    print(pmccs[i][0], pmccs[i][1])
         return pmccs
 
 
-    def getData(self):
-        # enf is a
+    def getENF(self):
         return self.enf
+
+
+    def getData(self):
+        return self.data
 
 
     def duration(self):
         """ Length of the clip in seconds."""
         assert(self.enf is not None)
-        return len(self.enf)
+        return self.clip_len_s
 
 
     def sampleRate(self):
@@ -273,9 +273,11 @@ class HumView(QMainWindow):
         audio_area.addWidget(self.e_fileName, 0, 1, 1, 3)
         audio_area.addWidget(QLabel("Sample rate (Hz)"), 1, 0)
         self.e_sampleRate = QLineEdit()
+        self.e_sampleRate.setReadOnly(True)
         audio_area.addWidget(self.e_sampleRate, 1, 1)
         audio_area.addWidget(QLabel("Duration (sec)"), 1, 2)
         self.e_duration = QLineEdit()
+        self.e_duration.setReadOnly(True)
         audio_area.addWidget(self.e_duration, 1, 3)
         audio_area.setColumnStretch(5, 1)
 
@@ -283,20 +285,20 @@ class HumView(QMainWindow):
         self.l_country = QComboBox(self)
         self.l_country.addItems(("Test", "GB"))
         grid_area.addWidget(self.l_country, 0, 1)
-        grid_area.addWidget(QLabel("Year"), 1, 0)
+        grid_area.addWidget(QLabel("Year"), 0, 2)
         self.l_year = QComboBox(self)
         for y in range(2000, 2023 + 1):
             self.l_year.addItem(f'{y}')
-        grid_area.addWidget(self.l_year, 1, 1)
-        grid_area.addWidget(QLabel("Month"), 1, 2)
+        grid_area.addWidget(self.l_year, 0, 3)
+        grid_area.addWidget(QLabel("Month"), 0, 4)
         self.l_month = QComboBox()
         self.l_month.addItems(('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'))
-        grid_area.addWidget(self.l_month, 1, 3)
+        grid_area.addWidget(self.l_month, 0, 5)
         self.b_loadGridHistory = QPushButton("Load")
-        grid_area.addWidget(self.b_loadGridHistory, 2, 0)
+        grid_area.addWidget(self.b_loadGridHistory, 1, 0)
         self.b_loadGridHistory.clicked.connect(self.onLoadGridHistory)
-        grid_area.setColumnStretch(4, 1)
+        grid_area.setColumnStretch(6, 1)
 
         analyse_area.addWidget(QLabel("Nominal freq"), 0, 0)
         self.b_nominal_freq = QComboBox()
@@ -323,23 +325,38 @@ class HumView(QMainWindow):
         result_area.addWidget(self.b_match, 0, 0)
         result_area.addWidget(QLabel("Offset (sec)"), 1, 0)
         self.e_offset = QLineEdit()
+        self.e_offset.setReadOnly(True)
         result_area.addWidget(self.e_offset, 1, 1)
         result_area.addWidget(QLabel("Date / time"), 1, 2)
         self.e_date = QLineEdit()
+        self.e_date.setReadOnly(True)
         result_area.addWidget(self.e_date, 1, 3)
         result_area.addWidget(QLabel("Quality"), 1, 4)
         self.e_quality = QLineEdit()
+        self.e_quality.setReadOnly(True)
         result_area.addWidget(self.e_quality, 1, 5)
+
+        self.setButtonStatus()
 
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
+
+
+    def setButtonStatus(self):
+        """ Enables or disables button depending on the model status."""
+        audioDataLoaded = self.controller.audioData() is not None
+        audioEnfLoaded = self.controller.audioENF() is not None
+        gridEnfLoaded = self.controller.gridENF() is not None
+
+        self.b_analyse.setEnabled(audioDataLoaded)
+        self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
 
 
     def plotAudioRec(self, audioRecording, t_offset=0):
         """ Plot the ENF values of an audio recording."""
         assert(type(audioRecording) == EnfModel)
 
-        data = audioRecording.getData()
+        data = audioRecording.getENF()
         pen = pg.mkPen(color=(255, 0, 0))
 
         if self.audioCurve:
@@ -358,7 +375,7 @@ class HumView(QMainWindow):
         """
         assert(type(gridHistory == EnfModel))
 
-        data = gridHistory.getData()
+        data = gridHistory.getENF()
         pen = pg.mkPen(color=(0, 255, 0))
 
         if self.gridFreqCurve:
@@ -370,7 +387,8 @@ class HumView(QMainWindow):
     def showMatches(self, matches):
         # print("Show matches")
         x = matches[0][0]
-        duration = int(self.e_duration.text())
+        #duration = int(self.e_duration.text())
+        duration = self.controller.getDuration()
 
         self.e_offset.setText(str(matches[0][0]))
         self.e_quality.setText(str(matches[0][1]))
@@ -387,12 +405,13 @@ class HumView(QMainWindow):
                                                   "","WAV Files (*.wav);;all files (*)",
                                                   options=options)
         if fileName and fileName != '':
-            self.controller.loadAudioFile(fileName, int(self.b_nominal_freq.currentText()),
-                                float(self.b_band_size.value()/1000),
-                                int(self.b_harmonic.value()))
+            self.controller.loadAudioFile(fileName)
             self.e_fileName.setText(fileName)
+            self.e_duration.setText(str(self.controller.getDuration()))
+            self.e_sampleRate.setText(str(self.controller.getSampleRate()))
 
         self.unsetCursor()
+        self.setButtonStatus()
 
 
     def onLoadGridHistory(self):
@@ -407,38 +426,45 @@ class HumView(QMainWindow):
         #self.gridHistory = GridHistoryModel(location, year, month)
 
         self.unsetCursor()
+        self.setButtonStatus()
 
 
     def onAnalyse(self):
         self.setCursor(Qt.WaitCursor)
 
         #harmonic = int(self.b_nominal_freq, self.b_band_size, self.b_harmonic.value())
-        self.controller.onAnalyse()
+        self.controller.onAnalyse(int(self.b_nominal_freq.currentText()),
+                                float(self.b_band_size.value()/1000),
+                                int(self.b_harmonic.value()))
 
         self.unsetCursor()
+        self.setButtonStatus()
+
 
     def onMatch(self):
         self.setCursor(Qt.WaitCursor)
         self.controller.onMatch()
         self.unsetCursor()
+        self.setButtonStatus()
 
 
 class HumController(QApplication):
     """ Orchestrate view and model. """
     def __init__(self, argv):
         super(HumController, self).__init__(argv)
-        self.view = HumView(self)
         self.model = None
+        self.gm = None
+        self.view = HumView(self)
 
     def show(self):
         self.view.show()
 
-    def loadAudioFile(self, fileName, nominal_freq, freq_band_size, harmonic):
+    def loadAudioFile(self, fileName):
         """ Create a model from an audio recoding and tell the view to show it."""
         self.model = EnfModel()
         self.model.fromWaveFile(fileName)
-        self.model.makeEnf(nominal_freq, freq_band_size, harmonic)
-        self.view.plotAudioRec(self.model)
+        #self.model.makeEnf(nominal_freq, freq_band_size, harmonic)
+        #self.view.plotAudioRec(self.model)
 
     def onLoadGridHistory(self, location, year, month, nominal_freq, freq_band_size, harmonic):
         self.gm = EnfModel()
@@ -446,12 +472,13 @@ class HumController(QApplication):
         self.gm.makeEnf(nominal_freq, freq_band_size, harmonic)
         self.view.plotGridHistory(self.gm)
 
-    def onAnalyse(self):
+    def onAnalyse(self, nominal_freq, freq_band_size, harmonic):
         # TODO: Sollte nur das Audio-Model analysieren
-        if self.model and self.gm:
-            m = self.model.match(self.gm)
-            self.view.showMatches(m)
-            self.view.plotAudioRec(self.model, t_offset=m[0][0])
+        if self.model is not None:
+            self.model.makeEnf(nominal_freq, freq_band_size, harmonic)
+            #m = self.model.match(self.gm)
+            #self.view.showMatches(m)
+            self.view.plotAudioRec(self.model)
 
     def onMatch(self):
         # TODO: onAnalyse() und onMatch() auseinandersortieren.
@@ -459,6 +486,21 @@ class HumController(QApplication):
             m = self.model.match(self.gm)
             self.view.showMatches(m)
             self.view.plotAudioRec(self.model, t_offset=m[0][0])
+
+    def getDuration(self):
+        return self.model.clip_len_s
+
+    def getSampleRate(self):
+        return self.model.fs
+
+    def audioData(self):
+        return self.model.getData() if self.model is not None else None
+
+    def audioENF(self):
+        return self.model.getENF() if self.model is not None else None
+
+    def gridENF(self):
+        return self.gm.getENF() if self.gm is not None else None
 
 
 #
