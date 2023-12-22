@@ -5,9 +5,10 @@
 
 import pyqtgraph as pg
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
-                             QVBoxLayout, QLineEdit, QFileDialog, QLabel, QHBoxLayout, QPushButton, QGroupBox, QGridLayout,
-                      QComboBox)
-from PyQt5.Qt import Qt, QCoreApplication, QSpinBox
+                             QVBoxLayout, QLineEdit, QFileDialog, QLabel,
+                             QPushButton, QGroupBox, QGridLayout,
+                             QComboBox, QSpinBox)
+from PyQt5.Qt import Qt 
 
 from scipy import signal
 import wave
@@ -178,7 +179,12 @@ class EnfModel():
         self.harmonic = harmonic
         self.enf_output = enf_series(self.data, self.fs, nominal_freq,
                                      freq_band_size, harmonic_n=harmonic)
-        self.sft = self.enf_output['stft']
+        
+        # stft is the Short-Term Fourier Transfrom of the autio file, computed
+        # per second.
+        self.stft = self.enf_output['stft']
+        
+        # ENF are the ENF values
         self.enf = self.enf_output['enf']
         # print(self.enf[0:5])
 
@@ -230,12 +236,12 @@ class HumView(QMainWindow):
         audio_area = QGridLayout()
         audio_group = QGroupBox("Audio")
         audio_group.setLayout(audio_area)
-        grid_group = QGroupBox("Grid")
-        grid_area = QGridLayout()
-        grid_group.setLayout(grid_area)
         analyse_group = QGroupBox("Analysis")
         analyse_area = QGridLayout()
         analyse_group.setLayout(analyse_area)
+        grid_group = QGroupBox("Grid")
+        grid_area = QGridLayout()
+        grid_group.setLayout(grid_area)
         result_group = QGroupBox("Result")
         result_area = QGridLayout()
         result_group.setLayout(result_area)
@@ -255,21 +261,23 @@ class HumView(QMainWindow):
 
         main_layout.addLayout(grid_area)
         main_layout.addWidget(audio_group)
-        main_layout.addWidget(grid_group)
         main_layout.addWidget(analyse_group)
+        main_layout.addWidget(grid_group)
         main_layout.addWidget(result_group)
 
         self.b_load = QPushButton("Load")
         self.b_load.clicked.connect(self.onOpenWavFile)
         audio_area.addWidget(self.b_load, 0, 0)
         self.e_fileName = QLineEdit()
-        audio_area.addWidget(self.e_fileName, 0, 1)
+        self.e_fileName.setReadOnly(True)
+        audio_area.addWidget(self.e_fileName, 0, 1, 1, 3)
         audio_area.addWidget(QLabel("Sample rate (Hz)"), 1, 0)
         self.e_sampleRate = QLineEdit()
         audio_area.addWidget(self.e_sampleRate, 1, 1)
-        audio_area.addWidget(QLabel("Duration (sec)"), 2, 0)
+        audio_area.addWidget(QLabel("Duration (sec)"), 1, 2)
         self.e_duration = QLineEdit()
-        audio_area.addWidget(self.e_duration, 2, 1)
+        audio_area.addWidget(self.e_duration, 1, 3)
+        audio_area.setColumnStretch(5, 1)
 
         grid_area.addWidget(QLabel("Location"), 0, 0)
         self.l_country = QComboBox(self)
@@ -288,6 +296,7 @@ class HumView(QMainWindow):
         self.b_loadGridHistory = QPushButton("Load")
         grid_area.addWidget(self.b_loadGridHistory, 2, 0)
         self.b_loadGridHistory.clicked.connect(self.onLoadGridHistory)
+        grid_area.setColumnStretch(4, 1)
 
         analyse_area.addWidget(QLabel("Nominal freq"), 0, 0)
         self.b_nominal_freq = QComboBox()
@@ -301,22 +310,26 @@ class HumView(QMainWindow):
         analyse_area.addWidget(QLabel("Harmonic"), 0, 4)
         self.b_harmonic = QSpinBox()
         self.b_harmonic.setRange(1, 10)
-        analyse_area.addWidget(self.b_harmonic, 0, 5)
         self.b_harmonic.setValue(2)
+        analyse_area.addWidget(self.b_harmonic, 0, 5)
+        analyse_area.setColumnStretch(6, 1)
 
         self.b_analyse = QPushButton("Analyse")
         self.b_analyse.clicked.connect(self.onAnalyse)
         analyse_area.addWidget(self.b_analyse, 1, 0)
 
-        result_area.addWidget(QLabel("Offset (sec)"), 0, 0)
+        self.b_match = QPushButton("Match")
+        self.b_match.clicked.connect(self.onMatch)
+        result_area.addWidget(self.b_match, 0, 0)
+        result_area.addWidget(QLabel("Offset (sec)"), 1, 0)
         self.e_offset = QLineEdit()
-        result_area.addWidget(self.e_offset, 0, 1)
-        result_area.addWidget(QLabel("Date / time"), 0, 2)
+        result_area.addWidget(self.e_offset, 1, 1)
+        result_area.addWidget(QLabel("Date / time"), 1, 2)
         self.e_date = QLineEdit()
-        result_area.addWidget(self.e_date, 0, 3)
-        result_area.addWidget(QLabel("Quality"), 0, 4)
+        result_area.addWidget(self.e_date, 1, 3)
+        result_area.addWidget(QLabel("Quality"), 1, 4)
         self.e_quality = QLineEdit()
-        result_area.addWidget(self.e_quality, 0, 5)
+        result_area.addWidget(self.e_quality, 1, 5)
 
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
@@ -404,6 +417,11 @@ class HumView(QMainWindow):
 
         self.unsetCursor()
 
+    def onMatch(self):
+        self.setCursor(Qt.WaitCursor)
+        self.controller.onMatch()
+        self.unsetCursor()
+
 
 class HumController(QApplication):
     """ Orchestrate view and model. """
@@ -429,6 +447,14 @@ class HumController(QApplication):
         self.view.plotGridHistory(self.gm)
 
     def onAnalyse(self):
+        # TODO: Sollte nur das Audio-Model analysieren
+        if self.model and self.gm:
+            m = self.model.match(self.gm)
+            self.view.showMatches(m)
+            self.view.plotAudioRec(self.model, t_offset=m[0][0])
+
+    def onMatch(self):
+        # TODO: onAnalyse() und onMatch() auseinandersortieren.
         if self.model and self.gm:
             m = self.model.match(self.gm)
             self.view.showMatches(m)
@@ -439,15 +465,6 @@ class HumController(QApplication):
 # Main
 #
 if __name__ == '__main__':
-    ######### Test
-    #enf = EnfModel()
-    #enf.fromWaveFile("001.wav")
-    #enf.makeEnf(2)
-    #ref = EnfModel()
-    #ref.fromWaveFile("71000_ref.wav")
-    #ref.makeEnf()
-    #enf.match(ref)
-    ######### End test
     app = HumController([])
     app.show()
     app.exec()
