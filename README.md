@@ -48,6 +48,8 @@ In oder to run the test case:
 
 - Press the *Match* button.
 
+![Screenshot](images/screenshot.png)
+
 To run the reference code from RH:
 
 ```
