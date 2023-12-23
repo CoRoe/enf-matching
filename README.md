@@ -1,30 +1,11 @@
-# ENF Matching
+# Electrical Network Frequency Analysis
 
-GUI application based on code from
-
-The example code from my blog post about ENF matching: ["How to date a
-recording using background electrical
-noise"](https://robertheaton.com/enf). This script predicts when a target
-recording was taken by comparing its background electrical noise to a
-reference recording.
-
-
-## Setup
-
-```
-virtualenv venv
-source venv/bin/activate
-pip3 install -r requirements.txt
-```
-Download sample files from https://github.com/ghuawhu/ENF-WHU-Dataset:
-```
-./bin/download-examnple-files
-ffmpeg -ss 71000 -i 001_ref.wav -c copy 71000_ref.wav
-```
+GUI application based on example code from Robert Heaton on
+["github"](https://github.com/robert/enf-matching).
 
 ## Run
 
-To run the GUI version:
+To run the application:
 
 ```
 ./hum.py
@@ -43,22 +24,25 @@ In oder to run the test case:
   values over time.
 
 - Load the grid frequencies. Leave all settings at their default values and
-  press the *Load* button in the *Grid* group. A green line will appear in the
+  press the *Load* button in the *Grid* group. A blue line will appear in the
   plot area, indicating the ENF values loaded from a hard-wired test file.
 
 - Press the *Match* button.
 
 ![Screenshot](images/screenshot.png)
 
-To run the reference code from RH:
+# Status
 
-```
-./main.py 001.wav -r 71000_ref.wav
-```
-Should output:
+The application reproduces the test case outlined in
+["github"](https://github.com/robert/enf-matching). The original reference
+file is very long, and my humble Linux notebook ran out of memory during the
+signal processing. I had to shorted the reference file, see the call to ffmpeg
+in https://github.com/CoRoe/enf-matching/blob/main/bin/download-example-files.
 
-```
-<snip>
-True value is 71458
-Best prediction is 460
-```
+Using actual grid frequency data is not yet implemented.
+
+# See also
+
+https://robertheaton.com/enf/
+
+https://github.com/bellingcat/open-questions
