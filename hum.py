@@ -7,10 +7,10 @@ import pyqtgraph as pg
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QVBoxLayout, QLineEdit, QFileDialog, QLabel,
                              QPushButton, QGroupBox, QGridLayout,
-                             QComboBox, QSpinBox)
+                             QComboBox, QSpinBox, QTabWidget)
 from PyQt5.Qt import Qt
 
-from scipy import signal
+from scipy import signal, fft
 import wave
 import numpy as np
 import datetime
@@ -153,6 +153,7 @@ class EnfModel():
     def __init__(self):
         self.data = None
         self.enf = None
+        self.fft = None
         #self.nominal_freq = 50
         #self.freq_band_size = 0.2
         #self.t0 = datetime.datetime(0, 0, 0)
@@ -189,6 +190,23 @@ class EnfModel():
         # print(self.enf[0:5])
 
 
+    def makeFFT(self):
+        # https://docs.scipy.org/doc/scipy/tutorial/fft.html#d-discrete-fourier-transforms
+        # Result is complex.
+        assert(self.data is not None)
+        # self.fft = fft.fft(self.data)
+        # sampling interval
+        X = fft.fft(self.data)
+        #ts = 1.0/self.fs                # Sampling interval
+        #t = np.arange(0,1,ts)
+        N = len(X)
+        n = np.arange(N)
+        T = N/self.fs
+        self.fft_freq = n/T
+        self.fft_ampl = np.abs(X)
+        return self.fft_freq, self.fft_ampl
+
+
     def match(self, ref):
         """Given a reference model with ENF values find the best fit with the
         own ENF values.
@@ -204,6 +222,10 @@ class EnfModel():
 
     def getData(self):
         return self.data
+
+
+    def getFFT(self):
+        return self.fft_freq, self.fft_ampl
 
 
     def duration(self):
@@ -246,18 +268,31 @@ class HumView(QMainWindow):
         result_area = QGridLayout()
         result_group.setLayout(result_area)
 
+        tabs = QTabWidget()
+
+        self.fftPlot = pg.PlotWidget()
+        self.fftPlot.setLabel("left", "Amplitude")
+        self.fftPlot.setLabel("bottom", "Frequency (Hz)")
+        self.fftPlot.addLegend()
+        self.fftPlot.setBackground("w")
+        self.fftPlot.showGrid(x=True, y=True)
+        self.fftPlot.setXRange(0, 1000)
+        self.fftPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
+        tabs.addTab(self.fftPlot, "FFT")
+
         # Widget showing the ENF values of a grid and an audio recording
         #
         # See https://pyqtgraph.readthedocs.io/en/latest/getting_started/plotting.html
-        self.plotWidget = pg.PlotWidget()
-        #self.plotWidget.setTitle("Grid frequency vs Time", color="b", size="10pt")
-        self.plotWidget.setLabel("left", "Frequency (Hz)")
-        self.plotWidget.setLabel("bottom", "Time (sec)")
-        self.plotWidget.addLegend()
-        self.plotWidget.setBackground("w")
-        self.plotWidget.showGrid(x=True, y=True)
-        self.plotWidget.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        main_layout.addWidget(self.plotWidget)
+        self.enfPlot = pg.PlotWidget()
+        self.enfPlot.setLabel("left", "Frequency (Hz)")
+        self.enfPlot.setLabel("bottom", "Time (sec)")
+        self.enfPlot.addLegend()
+        self.enfPlot.setBackground("w")
+        self.enfPlot.showGrid(x=True, y=True)
+        self.enfPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
+        tabs.addTab(self.enfPlot, "ENF")
+
+        main_layout.addWidget(tabs)
 
         main_layout.addLayout(grid_area)
         main_layout.addWidget(audio_group)
@@ -365,9 +400,14 @@ class HumView(QMainWindow):
         data = audioRecording.getENF()
         pen = pg.mkPen(color=(255, 0, 0))
 
+        fft_t, fft_a = audioRecording.makeFFT()
+        self.fft_curve = self.fftPlot.plot(name="WAV file spectrum",
+                                           pen=pen)
+        self.fft_curve.setData(fft_t, fft_a)
+
         if self.audioCurve:
-            self.plotWidget.removeItem(self.audioCurve)
-        self.audioCurve = self.plotWidget.plot(name="ENF values of WAV file",
+            self.enfPlot.removeItem(self.audioCurve)
+        self.audioCurve = self.enfPlot.plot(name="ENF values of WAV file",
                                                pen=pen)
         self.audioCurve.setData(list(range(t_offset, len(data) + t_offset)),
                                 data)
@@ -387,8 +427,8 @@ class HumView(QMainWindow):
         pen = pg.mkPen(color=(0, 0, 255))
 
         if self.gridFreqCurve:
-            self.plotWidget.removeItem(self.gridFreqCurve)
-        self.gridFreqCurve = self.plotWidget.plot(name="Grid frequency history", pen=pen)
+            self.enfPlot.removeItem(self.gridFreqCurve)
+        self.gridFreqCurve = self.enfPlot.plot(name="Grid frequency history", pen=pen)
         self.gridFreqCurve.setData(list(range(len(data))), data)
 
 
@@ -399,7 +439,7 @@ class HumView(QMainWindow):
 
         self.e_offset.setText(str(matches[0][0]))
         self.e_quality.setText(str(matches[0][1]))
-        self.plotWidget.setXRange(x, x + duration, padding=1)
+        self.enfPlot.setXRange(x, x + duration, padding=1)
 
 
     def onOpenWavFile(self):
@@ -445,7 +485,7 @@ class HumView(QMainWindow):
         if self.audioCurve:
             # FIXME: Curve still visible
             self.audioCurve.clear()
-            #self.plotWidget.removeItem(self.audioCurve)
+            #self.enfPlot.removeItem(self.audioCurve)
             #self.audioCurve = None
         self.controller.onAnalyse(int(self.b_nominal_freq.currentText()),
                                 float(self.b_band_size.value()/1000),
