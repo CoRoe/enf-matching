@@ -250,7 +250,7 @@ class HumView(QMainWindow):
         #
         # See https://pyqtgraph.readthedocs.io/en/latest/getting_started/plotting.html
         self.plotWidget = pg.PlotWidget()
-        self.plotWidget.setTitle("Grid frequency vs Time", color="b", size="10pt")
+        #self.plotWidget.setTitle("Grid frequency vs Time", color="b", size="10pt")
         self.plotWidget.setLabel("left", "Frequency (Hz)")
         self.plotWidget.setLabel("bottom", "Time (sec)")
         self.plotWidget.addLegend()
@@ -266,10 +266,12 @@ class HumView(QMainWindow):
         main_layout.addWidget(result_group)
 
         self.b_load = QPushButton("Load")
+        self.b_load.setToolTip("Load a WAV file to analyse.")
         self.b_load.clicked.connect(self.onOpenWavFile)
         audio_area.addWidget(self.b_load, 0, 0)
         self.e_fileName = QLineEdit()
         self.e_fileName.setReadOnly(True)
+        self.e_fileName.setToolTip("WAV file that has been loaded.")
         audio_area.addWidget(self.e_fileName, 0, 1, 1, 3)
         audio_area.addWidget(QLabel("Sample rate (Hz)"), 1, 0)
         self.e_sampleRate = QLineEdit()
@@ -300,14 +302,18 @@ class HumView(QMainWindow):
         self.b_loadGridHistory.clicked.connect(self.onLoadGridHistory)
         grid_area.setColumnStretch(6, 1)
 
-        analyse_area.addWidget(QLabel("Nominal freq"), 0, 0)
+        analyse_area.addWidget(QLabel("Nominal grid freq"), 0, 0)
         self.b_nominal_freq = QComboBox()
         self.b_nominal_freq.addItems(("50", "60"))
+        self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
+                                       " 50 Hz in most countries.")
         analyse_area.addWidget(self.b_nominal_freq, 0, 1)
-        analyse_area.addWidget(QLabel("Band size (mHz)"), 0, 2)
+        analyse_area.addWidget(QLabel("Band width"), 0, 2)
         self.b_band_size = QSpinBox()
         self.b_band_size.setRange(0, 500)
         self.b_band_size.setValue(200)
+        self.b_band_size.setMinimumWidth(100)
+        self.b_band_size.setSuffix(" mHz")
         analyse_area.addWidget(self.b_band_size, 0, 3)
         analyse_area.addWidget(QLabel("Harmonic"), 0, 4)
         self.b_harmonic = QSpinBox()
@@ -361,33 +367,34 @@ class HumView(QMainWindow):
 
         if self.audioCurve:
             self.plotWidget.removeItem(self.audioCurve)
-        self.audioCurve = self.plotWidget.plot(name="50 Hz spektrum", pen=pen)
-        self.audioCurve.setData(list(range(t_offset, len(data) + t_offset)), data)
+        self.audioCurve = self.plotWidget.plot(name="ENF values of WAV file",
+                                               pen=pen)
+        self.audioCurve.setData(list(range(t_offset, len(data) + t_offset)),
+                                data)
 
         self.e_duration.setText(str(audioRecording.duration()))
         self.e_sampleRate.setText(str(audioRecording.sampleRate()))
 
 
     def plotGridHistory(self, gridHistory):
-        """ Plot the grid frequencx history.
+        """ Plot the grid frequency history.
 
         :param: gridHistory - instanceof the grid history model
         """
         assert(type(gridHistory == EnfModel))
 
         data = gridHistory.getENF()
-        pen = pg.mkPen(color=(0, 255, 0))
+        pen = pg.mkPen(color=(0, 0, 255))
 
         if self.gridFreqCurve:
             self.plotWidget.removeItem(self.gridFreqCurve)
-        self.gridFreqCurve = self.plotWidget.plot(name="Grid frequence history", pen=pen)
+        self.gridFreqCurve = self.plotWidget.plot(name="Grid frequency history", pen=pen)
         self.gridFreqCurve.setData(list(range(len(data))), data)
 
 
     def showMatches(self, matches):
         # print("Show matches")
         x = matches[0][0]
-        #duration = int(self.e_duration.text())
         duration = self.controller.getDuration()
 
         self.e_offset.setText(str(matches[0][0]))
@@ -420,7 +427,8 @@ class HumView(QMainWindow):
         location = self.l_country.currentText()
         year = int(self.l_year.currentText())
         month = self.l_month.currentIndex()
-        self.controller.onLoadGridHistory(location, year, month, int(self.b_nominal_freq.currentText()),
+        self.controller.onLoadGridHistory(location, year, month,
+                                          int(self.b_nominal_freq.currentText()),
                                 float(self.b_band_size.value()/1000),
                                 int(self.b_harmonic.value()))
         #self.gridHistory = GridHistoryModel(location, year, month)
@@ -430,9 +438,15 @@ class HumView(QMainWindow):
 
 
     def onAnalyse(self):
+        """ Called when the 'analyse' button is pressed. """
         self.setCursor(Qt.WaitCursor)
 
         #harmonic = int(self.b_nominal_freq, self.b_band_size, self.b_harmonic.value())
+        if self.audioCurve:
+            # FIXME: Curve still visible
+            self.audioCurve.clear()
+            #self.plotWidget.removeItem(self.audioCurve)
+            #self.audioCurve = None
         self.controller.onAnalyse(int(self.b_nominal_freq.currentText()),
                                 float(self.b_band_size.value()/1000),
                                 int(self.b_harmonic.value()))
@@ -460,13 +474,13 @@ class HumController(QApplication):
         self.view.show()
 
     def loadAudioFile(self, fileName):
-        """ Create a model from an audio recoding and tell the view to show it."""
+        """ Create a model from an audio recoding and tell the view to show
+        it."""
         self.model = EnfModel()
         self.model.fromWaveFile(fileName)
-        #self.model.makeEnf(nominal_freq, freq_band_size, harmonic)
-        #self.view.plotAudioRec(self.model)
 
-    def onLoadGridHistory(self, location, year, month, nominal_freq, freq_band_size, harmonic):
+    def onLoadGridHistory(self, location, year, month, nominal_freq,
+                          freq_band_size, harmonic):
         self.gm = EnfModel()
         self.gm.fromWaveFile("71000_ref.wav")
         self.gm.makeEnf(nominal_freq, freq_band_size, harmonic)
