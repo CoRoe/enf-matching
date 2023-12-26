@@ -7,13 +7,17 @@ import pyqtgraph as pg
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QVBoxLayout, QLineEdit, QFileDialog, QLabel,
                              QPushButton, QGroupBox, QGridLayout,
-                             QComboBox, QSpinBox, QTabWidget)
-from PyQt5.Qt import Qt
+                             QComboBox, QSpinBox, QTabWidget,
+                             QMenu, QMenuBar, QAction, QDialog,
+                             QDialogButtonBox)
+from PyQt5.Qt import Qt, QIcon
 
 from scipy import signal, fft
 import wave
 import numpy as np
 import datetime
+import os
+import json
 
 
 def pmcc(x, y):
@@ -153,16 +157,23 @@ class EnfModel():
     def __init__(self):
         self.data = None
         self.enf = None
-        self.fft = None
+        self.databasePath = None
+        #self.fft = None
+        self.fft_freq = None
+        self.fft_freq = None
         #self.nominal_freq = 50
         #self.freq_band_size = 0.2
         #self.t0 = datetime.datetime(0, 0, 0)
 
 
+    def setDatabasePath(self, path):
+        self.databasePath = path
+
+
     def fromWaveFile(self, fpath):
         """Loads a .wav file and computes ENF and SFT.
 
-        :param fpath: the path to load the file from rate)
+        :param fpath: the path to __load the file from rate)
         """
         with wave.open(fpath) as wav_f:
             wav_buf = wav_f.readframes(wav_f.getnframes())
@@ -173,8 +184,14 @@ class EnfModel():
 
 
     def makeEnf(self, nominal_freq, freq_band_size, harmonic):
-        """ Creates an ENF series from the sample data. """
+        """ Creates an ENF series from the sample data.
+
+        :param: nominal_freq: Nominal grid frequency in Hz; usually 50 or 60 Hz
+        :param: freq_band_size: Size of the frequency band around *nominal_freq* in Hz
+        :param: harmonic:
+        """
         assert(self.data is not None)
+
         self.nominal_freq = nominal_freq
         self.freq_band_size = freq_band_size
         self.harmonic = harmonic
@@ -191,19 +208,20 @@ class EnfModel():
 
 
     def makeFFT(self):
+        """ Compute the spectrum of the original audio recording.
+
+        :param: self.data: sample data of the audio file
+        :param: self.fs: sample frequency
+        :returns: Tuple (frequencies, amplitudes)
+        """
         # https://docs.scipy.org/doc/scipy/tutorial/fft.html#d-discrete-fourier-transforms
         # Result is complex.
         assert(self.data is not None)
-        # self.fft = fft.fft(self.data)
-        # sampling interval
-        X = fft.fft(self.data)
-        #ts = 1.0/self.fs                # Sampling interval
-        #t = np.arange(0,1,ts)
-        N = len(X)
-        n = np.arange(N)
-        T = N/self.fs
-        self.fft_freq = n/T
-        self.fft_ampl = np.abs(X)
+
+        spectrum = fft.fft(self.data)
+        self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
+        self.fft_ampl = np.abs(spectrum)
+
         return self.fft_freq, self.fft_ampl
 
 
@@ -212,6 +230,7 @@ class EnfModel():
         own ENF values.
         """
         assert(type(ref) == EnfModel)
+
         pmccs = search(self.enf, ref.enf)
         return pmccs
 
@@ -235,11 +254,12 @@ class EnfModel():
 
 
     def sampleRate(self):
+        """ Return the sample rate in samples / second. """
         return self.fs
 
 
 class HumView(QMainWindow):
-    """ Displays ENF analysis and result."""
+    """ Display ENF analysis and result."""
 
     def __init__(self, controller):
         super().__init__()
@@ -247,6 +267,7 @@ class HumView(QMainWindow):
         self.audioCurve = None
         self.gridFreqCurve = None
         self.createWidgets()
+        self.createMenu()
 
 
     def createWidgets(self):
@@ -383,6 +404,48 @@ class HumView(QMainWindow):
         self.setCentralWidget(widget)
 
 
+    def createMenu_unused(self):
+        menuBar = QMenuBar(self)
+        self.setMenuBar(menuBar)
+        fileMenu = menuBar.addMenu("&File")
+
+        editMenu = menuBar.addMenu("&Edit")
+
+        editSettingsAction = QAction("&Settings", self)
+        editSettingsAction.triggered.connect(self.editSettings)
+        editMenu.addAction(editSettingsAction)
+
+
+    def createMenu(self):
+        menuBar = QMenuBar(self)
+        self.setMenuBar(menuBar)
+
+        b_open = QAction("&Open project", self)
+        # b_open.setStatusTip("Open a project")
+        b_save = QAction("&Save project", self)
+        # b_save.setStatusTip("Save the project")
+
+        file_menu = menuBar.addMenu("&File")
+        file_menu.addAction(b_open)
+        file_menu.addAction(b_save)
+
+        editMenu = menuBar.addMenu("&Edit")
+
+        editSettingsAction = QAction("&Settings", self)
+        editSettingsAction.triggered.connect(self.editSettings)
+        editMenu.addAction(editSettingsAction)
+
+
+    def editSettings(self):
+        dlg = SettingsDialog(self.controller.settings)
+        if dlg.exec():
+            print("Success!")
+            #dlg.save()
+            # self.controller.setDatabasePath(dlg.databasePath())
+        else:
+            print("Cancel!")
+
+
     def setButtonStatus(self):
         """ Enables or disables button depending on the model status."""
         audioDataLoaded = self.controller.audioData() is not None
@@ -502,12 +565,120 @@ class HumView(QMainWindow):
         self.setButtonStatus()
 
 
+class SettingsDialog(QDialog):
+
+    def __init__(self, settings):
+        super().__init__()
+
+        assert(type(settings) == Settings)
+
+        self.settings = settings
+        self.setWindowTitle("Edit Settings")
+
+        QBtn = QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+
+        self.buttonBox = QDialogButtonBox(QBtn)
+        self.buttonBox.accepted.connect(self.save)
+        self.buttonBox.rejected.connect(self.reject)
+
+        top_layout = QVBoxLayout()
+        layout = QGridLayout()
+        top_layout.addLayout(layout)
+        top_layout.addWidget(self.buttonBox)
+        layout.addWidget(QLabel("Database directory:"), 0, 0)
+        self.e_databasePath = QLineEdit()
+        layout.addWidget(self.e_databasePath, 0, 1)
+        self.e_databasePath.setToolTip("Path where downlaeded ENF data are stored")
+        self.setLayout(top_layout)
+
+        #self.__load()
+        #self.__setDefaults()
+        #self.settings = self.settings0
+
+        self.e_databasePath.setText(self.settings.databasePath())
+
+    def save(self):
+        self.settings.setDatabasePath(self.e_databasePath.text())
+        self.settings.save()
+        self.accept()
+
+
+class Settings():
+    """ Keep track of settings."""
+
+    template = {"databasepath": "/tmp"}
+
+    def __init__(self):
+        """ Initialise the setting.
+
+        Attempt to read the settings from a JSON file. Its path is hard-coded as '~/.hum.json'.
+        If it does not exist or is malformed, default values are used. Internally, the values are
+        stored in a dict.
+        """
+        print("Load settings ...")
+
+        # File where settings are stored
+        self.settingsPath = os.path.expanduser("~") + "/.hum.json"
+
+        try:
+            with open(self.settingsPath, 'r') as s:
+                self.settings0 = json.load(s)
+                print("... OK")
+        except IOError:
+            print("... Not found")
+            self.settings0 = {}
+        except Exception as e:
+            self.settings0 = {}
+            print(e)
+        self.__setDefaults()
+        self.settings = self.settings0.copy()
+
+
+    def save(self):
+        """ Save the settings to a JSON file.
+
+        The method checks if the settings have actually been modified and
+        if so writes them to a file.
+        """
+        print("Saving settings ...")
+
+        # If values have changed then save the settings
+        if self.settings != self.settings0:
+            print("... not equeal ...")
+            try:
+                with open(self.settingsPath, 'w') as s:
+                    json_object = json.dumps(self.settings, indent=4)
+                    s.write(json_object)
+                    self.settings0 = self.settings.copy()
+                    print("... OK")
+            except IOError as e:
+                print("... Exception:", e)
+        else:
+            print("... not changed")
+
+
+    def __setDefaults(self):
+        for item in Settings.template:
+            if not item in self.settings0:
+                self.settings0[item] = Settings.template[item]
+
+
+    def databasePath(self):
+        """ Get the database path from the settings."""
+        return self.settings["databasepath"]
+
+
+    def setDatabasePath(self, path):
+        self.settings['databasepath'] = path
+
+
 class HumController(QApplication):
     """ Orchestrate view and model. """
     def __init__(self, argv):
         super(HumController, self).__init__(argv)
         self.model = None
         self.gm = None
+        self.settings = Settings()
         self.view = HumView(self)
 
     def show(self):
@@ -555,6 +726,16 @@ class HumController(QApplication):
 
     def gridENF(self):
         return self.gm.getENF() if self.gm is not None else None
+
+    def setDatabasePath(self, path):
+        self.model.setDatabasePath(path)
+        self.gm.setDatabasePath(path)
+
+    def getSettings(self):
+        print()
+
+    def updateSettings(self):
+        print()
 
 
 #
