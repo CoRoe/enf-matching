@@ -13,11 +13,15 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
 from PyQt5.Qt import Qt, QIcon
 
 from scipy import signal, fft
+from numpy import uint16
 import wave
 import numpy as np
 import datetime
 import os
 import json
+import requests
+import h5py
+
 
 
 def pmcc(x, y):
@@ -154,10 +158,10 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
 
 
 class EnfModel():
-    def __init__(self):
+    def __init__(self, databasePath):
         self.data = None
         self.enf = None
-        self.databasePath = None
+        self.databasePath = databasePath
         #self.fft = None
         self.fft_freq = None
         self.fft_freq = None
@@ -205,6 +209,92 @@ class EnfModel():
         # ENF are the ENF values
         self.enf = self.enf_output['enf']
         # print(self.enf[0:5])
+
+
+    def loadGridEnf(self, location, year: int, month: int):
+        assert(self.databasePath)
+        assert(type(year) == int and year > 1970)
+        assert(type(month) == int and month >= 1 and month <= 12)
+
+        fileName = f"{self.databasePath}/{location}.hp5"
+        timestamp = f"{year}-{month}-01 00:00:00"
+
+        # First check if the enf series is contained in the database
+        try:
+            with h5py.File(fileName, 'r') as f:
+                #self.enf = f[timestamp]
+                dset = f[timestamp]
+                self.enf = dset[()]
+                # FIXME: Returns a dataset; get data from it
+                # https://docs.h5py.org/en/stable/high/dataset.html
+                # shape ist (1,), da das Array 1-imensional ist.
+                print(f"From database: {type(self.enf)}")
+        except:
+            if location == 'GB':
+                enf = self.loadNationalGridGB(location, year, month)
+                if enf is not None:
+                    assert(type(enf) == np.ndarray)
+                    #print(f"Got {len(enf)} alues of type {type(enf[0])}")
+                    print(f"National grid date is type {type(enf)}")
+                    self.enf = enf
+                    try:
+                        with h5py.File(fileName, 'w') as f:
+                            dset = f.create_dataset(timestamp, data=enf)
+                            #f[timestamp] = enf
+                    except Exception as e:
+                        print("Failed to write enf to datebase:", e)
+        print()
+
+
+    def loadNationalGridGB(self, location, year, month):
+        """
+        Download ENF historical data from the GB National database.
+
+        :param location: ignored
+        :param year: year
+        :param month: month
+        :returns np.array with the ENF values or None if not found. ENF values
+        are the frequency in mHz.
+        """
+        # TODO: Clean up code of this method
+        data = None
+        arr = None
+        url = 'https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json'
+        timestamp = f"{year}-{month}-01 00:00:00"
+
+        ## Request execution and response reception
+        print(f"Querying {url} ...")
+        response = requests.get(url)
+        print(f"... Status: {response.status_code}")
+
+        ## Converting the JSON response string to a Python dictionary
+        if response.ok:
+            ret_data = response.json()['result']
+            try:
+                csv_resource = next(r for r in ret_data['resources']
+                                    if r['path'].endswith(f"/f-{year}-{month}.csv"))
+                print(f"Downloading {csv_resource['path']} ...")
+                response = requests.get(csv_resource['path'])
+                print(f"... Status: {response.status_code}")
+                timestamp = response.text.split(os.linesep)[1].split(',')[0]
+                timestamp = f"{year}-{month}-01 00:00:00"
+                try:
+                    print("Extracting frequencies ...")
+                    #data = [float(row.split(',')[1]) for row in
+                    #        response.text.split(os.linesep)[1:-1]]
+                    data = [uint16(float(row.split(',')[1]) * 1000) for row in
+                            response.text.split(os.linesep)[1:-1]]
+                    if data is None:
+                        print("No data")
+                    else:
+                        print(f"{len(data)} records")
+                        arr = np.array(data)
+                except Exception as e:
+                    print(e)
+            except Exception as e:
+                print(e)
+        print("End of loadGridEnf")
+        return arr
 
 
     def makeFFT(self):
@@ -487,6 +577,8 @@ class HumView(QMainWindow):
         assert(type(gridHistory == EnfModel))
 
         data = gridHistory.getENF()
+        assert(data is not None and type(data) == np.ndarray)
+
         pen = pg.mkPen(color=(0, 0, 255))
 
         if self.gridFreqCurve:
@@ -525,6 +617,7 @@ class HumView(QMainWindow):
 
 
     def onLoadGridHistory(self):
+        """ Gets historical ENF values."""
         self.setCursor(Qt.WaitCursor)
 
         location = self.l_country.currentText()
@@ -692,10 +785,14 @@ class HumController(QApplication):
 
     def onLoadGridHistory(self, location, year, month, nominal_freq,
                           freq_band_size, harmonic):
-        self.gm = EnfModel()
-        self.gm.fromWaveFile("71000_ref.wav")
-        self.gm.makeEnf(nominal_freq, freq_band_size, harmonic)
-        self.view.plotGridHistory(self.gm)
+        self.gm = EnfModel(self.settings.databasePath())
+        if location == 'Test':
+            self.gm.fromWaveFile("71000_ref.wav")
+            self.gm.makeEnf(nominal_freq, freq_band_size, harmonic)
+        elif location == 'GB':
+            self.gm.loadGridEnf(location, year, month)
+        if self.gm.enf is not None:
+            self.view.plotGridHistory(self.gm)
 
     def onAnalyse(self, nominal_freq, freq_band_size, harmonic):
         # TODO: Sollte nur das Audio-Model analysieren
