@@ -81,12 +81,12 @@ def butter_bandpass_filter(data, locut, hicut, fs, order):
 
 
 def stft(data, fs):
-    """Performs a Short-time Fourier Transform (STFT) on input data.
+    """Perform a Short-time Fourier Transform (STFT) on input data.
 
     :param data: list of signal sample amplitudes
     :param fs: the sample rate
     :returns: tuple of (array of sample frequencies, array of segment times, STFT of input).
-        This is the same return format as scipy's stft function.
+    This is the same return format as scipy's stft function.
     """
     window_size_seconds = 16
     nperseg = fs * window_size_seconds
@@ -158,7 +158,17 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
 
 
 class EnfModel():
+    """Models an ENF series.
+
+    Has methods to retrieve ENF series from databases on the internet.
+    """
+
     def __init__(self, databasePath):
+        """Create an empty ENF series.
+
+        :param dataBasePath: File system path where the database will be
+        cached.
+        """
         self.data = None
         self.enf = None
         self.databasePath = databasePath
@@ -178,10 +188,13 @@ class EnfModel():
         """Loads a .wav file and computes ENF and SFT.
 
         :param fpath: the path to __load the file from rate)
+
+        On exit, self.data is an Numpy array with the samples of the loaded audio recoding.
         """
         with wave.open(fpath) as wav_f:
             wav_buf = wav_f.readframes(wav_f.getnframes())
             self.data = np.frombuffer(wav_buf, dtype=np.int16)
+            assert(type(self.data) == np.ndarray)
             self.fs = wav_f.getframerate()
             self.clip_len_s = len(self.data) / self.fs
             print(f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds")
@@ -207,11 +220,19 @@ class EnfModel():
         self.stft = self.enf_output['stft']
 
         # ENF are the ENF values
-        self.enf = self.enf_output['enf']
+        # self.enf = self.enf_output['enf']
+        enf = [int(e * 1000) for e in self.enf_output['enf']]
+        self.enf = np.array(enf)
         # print(self.enf[0:5])
 
 
     def loadGridEnf(self, location, year: int, month: int):
+        """ Load the grid ENF values from a database.
+
+        :param location: The name/location of the grid
+        :param year: The year
+        :param month: The number of the month (1 = Jan, 2 = Feb, ...)
+        """
         assert(self.databasePath)
         assert(type(year) == int and year > 1970)
         assert(type(month) == int and month >= 1 and month <= 12)
@@ -222,25 +243,19 @@ class EnfModel():
         # First check if the enf series is contained in the database
         try:
             with h5py.File(fileName, 'r') as f:
-                #self.enf = f[timestamp]
                 dset = f[timestamp]
                 self.enf = dset[()]
-                # FIXME: Returns a dataset; get data from it
-                # https://docs.h5py.org/en/stable/high/dataset.html
-                # shape ist (1,), da das Array 1-imensional ist.
                 print(f"From database: {type(self.enf)}")
         except:
             if location == 'GB':
                 enf = self.loadNationalGridGB(location, year, month)
                 if enf is not None:
                     assert(type(enf) == np.ndarray)
-                    #print(f"Got {len(enf)} alues of type {type(enf[0])}")
                     print(f"National grid date is type {type(enf)}")
                     self.enf = enf
                     try:
                         with h5py.File(fileName, 'w') as f:
                             dset = f.create_dataset(timestamp, data=enf)
-                            #f[timestamp] = enf
                     except Exception as e:
                         print("Failed to write enf to datebase:", e)
         print()
@@ -256,11 +271,8 @@ class EnfModel():
         :returns np.array with the ENF values or None if not found. ENF values
         are the frequency in mHz.
         """
-        # TODO: Clean up code of this method
-        data = None
         arr = None
         url = 'https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json'
-        timestamp = f"{year}-{month}-01 00:00:00"
 
         ## Request execution and response reception
         print(f"Querying {url} ...")
@@ -276,12 +288,8 @@ class EnfModel():
                 print(f"Downloading {csv_resource['path']} ...")
                 response = requests.get(csv_resource['path'])
                 print(f"... Status: {response.status_code}")
-                timestamp = response.text.split(os.linesep)[1].split(',')[0]
-                timestamp = f"{year}-{month}-01 00:00:00"
                 try:
                     print("Extracting frequencies ...")
-                    #data = [float(row.split(',')[1]) for row in
-                    #        response.text.split(os.linesep)[1:-1]]
                     data = [uint16(float(row.split(',')[1]) * 1000) for row in
                             response.text.split(os.linesep)[1:-1]]
                     if data is None:
@@ -379,7 +387,7 @@ class HumView(QMainWindow):
         result_area = QGridLayout()
         result_group.setLayout(result_area)
 
-        tabs = QTabWidget()
+        self.tabs = QTabWidget()
 
         self.fftPlot = pg.PlotWidget()
         self.fftPlot.setLabel("left", "Amplitude")
@@ -389,7 +397,7 @@ class HumView(QMainWindow):
         self.fftPlot.showGrid(x=True, y=True)
         self.fftPlot.setXRange(0, 1000)
         self.fftPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        tabs.addTab(self.fftPlot, "FFT")
+        self.tabs.addTab(self.fftPlot, "FFT")
 
         # Widget showing the ENF values of a grid and an audio recording
         #
@@ -401,9 +409,9 @@ class HumView(QMainWindow):
         self.enfPlot.setBackground("w")
         self.enfPlot.showGrid(x=True, y=True)
         self.enfPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        tabs.addTab(self.enfPlot, "ENF")
+        self.tabs.addTab(self.enfPlot, "ENF")
 
-        main_layout.addWidget(tabs)
+        main_layout.addWidget(self.tabs)
 
         main_layout.addLayout(grid_area)
         main_layout.addWidget(audio_group)
@@ -492,18 +500,6 @@ class HumView(QMainWindow):
 
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
-
-
-    def createMenu_unused(self):
-        menuBar = QMenuBar(self)
-        self.setMenuBar(menuBar)
-        fileMenu = menuBar.addMenu("&File")
-
-        editMenu = menuBar.addMenu("&Edit")
-
-        editSettingsAction = QAction("&Settings", self)
-        editSettingsAction.triggered.connect(self.editSettings)
-        editMenu.addAction(editSettingsAction)
 
 
     def createMenu(self):
@@ -617,12 +613,13 @@ class HumView(QMainWindow):
 
 
     def onLoadGridHistory(self):
-        """ Gets historical ENF values."""
+        """ Gets historical ENF values from an ENF database. Called when the 'load' button
+        in the 'grid' field is clicked."""
         self.setCursor(Qt.WaitCursor)
 
         location = self.l_country.currentText()
         year = int(self.l_year.currentText())
-        month = self.l_month.currentIndex()
+        month = self.l_month.currentIndex() + 1
         self.controller.onLoadGridHistory(location, year, month,
                                           int(self.b_nominal_freq.currentText()),
                                 float(self.b_band_size.value()/1000),
@@ -630,6 +627,7 @@ class HumView(QMainWindow):
         #self.gridHistory = GridHistoryModel(location, year, month)
 
         self.unsetCursor()
+        self.tabs.setCurrentIndex(1)
         self.setButtonStatus()
 
 
@@ -652,9 +650,15 @@ class HumView(QMainWindow):
 
 
     def onMatch(self):
+        """Called when the 'match' button is clicked."""
         self.setCursor(Qt.WaitCursor)
+        now = datetime.datetime.now()
+        print(f"{now} ... starting")
         self.controller.onMatch()
+        self.tabs.setCurrentIndex(1)
         self.unsetCursor()
+        now = datetime.datetime.now()
+        print(f"{now} ... done")
         self.setButtonStatus()
 
 
@@ -780,11 +784,15 @@ class HumController(QApplication):
     def loadAudioFile(self, fileName):
         """ Create a model from an audio recoding and tell the view to show
         it."""
-        self.model = EnfModel()
+        self.model = EnfModel(self.settings.databasePath())
         self.model.fromWaveFile(fileName)
 
     def onLoadGridHistory(self, location, year, month, nominal_freq,
                           freq_band_size, harmonic):
+        assert(type(year) == int and year > 1970)
+        assert(type(month) == int and month >= 1 and month <= 12)
+        assert(type(nominal_freq) == int and nominal_freq in (50, 60))
+
         self.gm = EnfModel(self.settings.databasePath())
         if location == 'Test':
             self.gm.fromWaveFile("71000_ref.wav")
