@@ -326,11 +326,28 @@ class EnfModel():
     def match(self, ref):
         """Given a reference model with ENF values find the best fit with the
         own ENF values.
+
+        :param ref: The ENF series of the grid
+        :returns: The index into the reference series of thebets match; the correlation
+        at that index, an array of correlations for all possible indices.
+
+        The method computes the Pearson correlation between the ENF values in the clip
+        and the grid.
+
+        See: https://realpython.com/numpy-scipy-pandas-correlation-python/
+        https://numpy.org/doc/stable/reference/generated/numpy.corrcoef.html
+
+        The method computes the Pearson correlation between the ENF values in the clip
+        and the grid.
+
         """
         assert(type(ref) == EnfModel)
 
-        pmccs = search(self.enf, ref.enf)
-        return pmccs
+        ref_enf = ref.getENF()
+        n_steps = len(ref_enf) - len(self.enf) + 1
+        corr = [np.corrcoef(ref_enf[step:step+len(self.enf)], self.enf)[0][1] for step in range(n_steps)]
+        max_index = np.argmax(corr)
+        return max_index, corr[max_index], corr
 
 
     def getENF(self):
@@ -507,9 +524,9 @@ class HumView(QMainWindow):
         self.setMenuBar(menuBar)
 
         b_open = QAction("&Open project", self)
-        # b_open.setStatusTip("Open a project")
+        b_open.setStatusTip("Open a project")
         b_save = QAction("&Save project", self)
-        # b_save.setStatusTip("Save the project")
+        b_save.setStatusTip("Save the project")
 
         file_menu = menuBar.addMenu("&File")
         file_menu.addAction(b_open)
@@ -583,13 +600,13 @@ class HumView(QMainWindow):
         self.gridFreqCurve.setData(list(range(len(data))), data)
 
 
-    def showMatches(self, matches):
+    def showMatches(self, t, q, corr):
         # print("Show matches")
-        x = matches[0][0]
+        x = t
         duration = self.controller.getDuration()
 
-        self.e_offset.setText(str(matches[0][0]))
-        self.e_quality.setText(str(matches[0][1]))
+        self.e_offset.setText(str(t))
+        self.e_quality.setText(str(q))
         self.enfPlot.setXRange(x, x + duration, padding=1)
 
 
@@ -813,9 +830,9 @@ class HumController(QApplication):
     def onMatch(self):
         # TODO: onAnalyse() und onMatch() auseinandersortieren.
         if self.model and self.gm:
-            m = self.model.match(self.gm)
-            self.view.showMatches(m)
-            self.view.plotAudioRec(self.model, t_offset=m[0][0])
+            t, q, corr = self.model.match(self.gm)
+            self.view.showMatches(t, q, corr)
+            self.view.plotAudioRec(self.model, t_offset=t)
 
     def getDuration(self):
         return self.model.clip_len_s
