@@ -328,25 +328,25 @@ class EnfModel():
         own ENF values.
 
         :param ref: The ENF series of the grid
-        :returns: The index into the reference series of thebets match; the correlation
-        at that index, an array of correlations for all possible indices.
+        :returns: The index into the reference series of thebets match; the
+        correlation at that index, an array of correlations for all possible
+        indices.
 
-        The method computes the Pearson correlation between the ENF values in the clip
-        and the grid.
+        The method computes the Pearson correlation between the ENF values in
+        the clip and the grid.
 
         See: https://realpython.com/numpy-scipy-pandas-correlation-python/
         https://numpy.org/doc/stable/reference/generated/numpy.corrcoef.html
-
-        The method computes the Pearson correlation between the ENF values in the clip
-        and the grid.
-
         """
         assert(type(ref) == EnfModel)
 
+        print(f"Start correlation computation: {datetime.datetime.now()} ...")
         ref_enf = ref.getENF()
         n_steps = len(ref_enf) - len(self.enf) + 1
-        corr = [np.corrcoef(ref_enf[step:step+len(self.enf)], self.enf)[0][1] for step in range(n_steps)]
+        corr = [np.corrcoef(ref_enf[step:step+len(self.enf)], self.enf)[0][1]
+                for step in range(n_steps)]
         max_index = np.argmax(corr)
+        print(f"End correlation computation {datetime.datetime.now()} ...")
         return max_index, corr[max_index], corr
 
 
@@ -381,6 +381,7 @@ class HumView(QMainWindow):
         self.controller = controller
         self.audioCurve = None
         self.gridFreqCurve = None
+        self.correlationCurve = None
         self.createWidgets()
         self.createMenu()
 
@@ -427,6 +428,17 @@ class HumView(QMainWindow):
         self.enfPlot.showGrid(x=True, y=True)
         self.enfPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
         self.tabs.addTab(self.enfPlot, "ENF")
+
+        # Plots the correlation versus time offset
+        self.corrPlot = pg.PlotWidget()
+        self.corrPlot.setLabel("left", "correlation")
+        self.corrPlot.setLabel("bottom", "time lag [sec]")
+        self.corrPlot.addLegend()
+        self.corrPlot.setBackground("w")
+        self.corrPlot.showGrid(x=True, y=True)
+        self.corrPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
+        #self.corrPlot.setYRange(-1, +1)
+        self.tabs.addTab(self.corrPlot, "Correlation")
 
         main_layout.addWidget(self.tabs)
 
@@ -600,14 +612,24 @@ class HumView(QMainWindow):
         self.gridFreqCurve.setData(list(range(len(data))), data)
 
 
+    def plotCorrelation(self, t, corr):
+        pen = pg.mkPen(color=(0, 0, 255))
+
+        if self.correlationCurve:
+            self.enfPlot.removeItem(self.correlationCurve)
+        self.correlationCurve = self.corrPlot.plot(name="Correlation", pen=pen)
+        self.correlationCurve.setData(list(range(len(corr))), corr)
+
+
     def showMatches(self, t, q, corr):
         # print("Show matches")
-        x = t
         duration = self.controller.getDuration()
 
         self.e_offset.setText(str(t))
         self.e_quality.setText(str(q))
-        self.enfPlot.setXRange(x, x + duration, padding=1)
+        self.enfPlot.setXRange(t, t + duration, padding=1)
+
+        self.plotCorrelation(t, corr)
 
 
     def onOpenWavFile(self):
