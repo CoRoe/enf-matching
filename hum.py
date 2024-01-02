@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QDialogButtonBox)
 from PyQt5.Qt import Qt, QIcon
 
-from scipy import signal, fft
+from scipy import signal, fft, spatial
 from numpy import uint16
 import wave
 import numpy as np
@@ -323,7 +323,7 @@ class EnfModel():
         return self.fft_freq, self.fft_ampl
 
 
-    def match(self, ref):
+    def matchPearson(self, ref):
         """Given a reference model with ENF values find the best fit with the
         own ENF values.
 
@@ -340,14 +340,41 @@ class EnfModel():
         """
         assert(type(ref) == EnfModel)
 
-        print(f"Start correlation computation: {datetime.datetime.now()} ...")
+        print(f"Start Pearson correlation computation: {datetime.datetime.now()} ...")
         ref_enf = ref.getENF()
         n_steps = len(ref_enf) - len(self.enf) + 1
         corr = [np.corrcoef(ref_enf[step:step+len(self.enf)], self.enf)[0][1]
                 for step in range(n_steps)]
         max_index = np.argmax(corr)
-        print(f"End correlation computation {datetime.datetime.now()} ...")
+        print(f"End Pearson correlation computation {datetime.datetime.now()} ...")
         return max_index, corr[max_index], corr
+
+
+    def matchEuclid(self, ref):
+        """Given a reference model with ENF values find the best fit with the
+        own ENF values.
+
+        :param ref: The ENF series of the grid
+        :returns: The index into the reference series of thebets match; the
+        correlation at that index, an array of correlations for all possible
+        indices.
+
+        The method computes the Euclidian distance between the ENF values in
+        the clip and the grid.
+
+        See: https://www.geeksforgeeks.org/python-distance-between-collections-of-inputs/
+        """
+        assert(type(ref) == EnfModel)
+
+        print(f"Start Euclidian correlation computation: {datetime.datetime.now()} ...")
+        ref_enf = ref.getENF()
+        n_steps = len(ref_enf) - len(self.enf) + 1
+        corr = [spatial.distance.cdist([ref_enf[step:step+len(self.enf)], self.enf],
+                                       [ref_enf[step:step+len(self.enf)], self.enf],
+                                       'sqeuclidean')[0][1] for step in range(n_steps)]
+        min_index = np.argmin(corr)
+        print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
+        return min_index, corr[min_index], corr
 
 
     def getENF(self):
@@ -512,6 +539,9 @@ class HumView(QMainWindow):
         self.b_match = QPushButton("Match")
         self.b_match.clicked.connect(self.onMatch)
         result_area.addWidget(self.b_match, 0, 0)
+        self.cb_algo = QComboBox()
+        self.cb_algo.addItems(('Pearson', 'Euclidian'))
+        result_area.addWidget(self.cb_algo, 0, 1)
         result_area.addWidget(QLabel("Offset (sec)"), 1, 0)
         self.e_offset = QLineEdit()
         self.e_offset.setReadOnly(True)
@@ -693,7 +723,7 @@ class HumView(QMainWindow):
         self.setCursor(Qt.WaitCursor)
         now = datetime.datetime.now()
         print(f"{now} ... starting")
-        self.controller.onMatch()
+        self.controller.onMatch(self.cb_algo.currentText())
         self.tabs.setCurrentIndex(1)
         self.unsetCursor()
         now = datetime.datetime.now()
@@ -849,10 +879,14 @@ class HumController(QApplication):
             #self.view.showMatches(m)
             self.view.plotAudioRec(self.model)
 
-    def onMatch(self):
+    def onMatch(self, algo):
         # TODO: onAnalyse() und onMatch() auseinandersortieren.
         if self.model and self.gm:
-            t, q, corr = self.model.match(self.gm)
+            assert(algo in ('Pearson', 'Euclidian'))
+            if algo == 'Pearson':
+                t, q, corr = self.model.matchPearson(self.gm)
+            else:
+                t, q, corr = self.model.matchEuclid(self.gm)
             self.view.showMatches(t, q, corr)
             self.view.plotAudioRec(self.model, t_offset=t)
 
