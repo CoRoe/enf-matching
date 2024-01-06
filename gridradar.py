@@ -19,13 +19,15 @@
 import requests
 import json
 import h5py
+import argparse
+from numpy import uint16
 
 
 url = 'https://api.gridradar.net/query'
 filename = 'gridradar.hp5'
 
 
-def query_gridradar():
+def query_nationalgrideso():
     ## API query parameters
     request = {
       "metric": "frequency-ucte-median-1s",
@@ -36,7 +38,7 @@ def query_gridradar():
 
     ## Read token from file
     with open("gridradar-token.json") as f:
-        token_data = json.load(f)
+        token_data = json.__load(f)
 
     headers = {
         'Content-type': 'application/json',
@@ -47,10 +49,15 @@ def query_gridradar():
     json_request = json.dumps(request)
 
     ## Request execution and response reception
+    print(f"Querying {url} ...")
     response = requests.post(url, data=json_request, headers=headers)
+    print(f"... Status: {response.status_code}")
 
     ## Converting the JSON response string to a Python dictionary
-    data = json.loads(response.content)
+    if response.ok:
+        data = json.loads(response.content)
+    else:
+        data = None
 
     return data
 
@@ -69,15 +76,28 @@ def save_to_file(d: list):
     datapoints = d[0]['datapoints']
     timestamp = datapoints[0][1]
 
+    print(f"Time stamp: {timestamp}")
+
     freq = [int(x[0] * 1000) for x in datapoints]
-    f = h5py.File(filename, 'w')
-    # Write dataset
-    f.create_dataset(timestamp, data=freq)
-    # Close file and write data to disk. Important!
-    f.close()
+    with h5py.File(filename, 'a') as f:
+        f.create_dataset(timestamp, data=freq, dtype=uint16)
+        #f[timestamp] = freq
+        print(f.keys())
+
+
+def dump_file():
+    with h5py.File(filename, 'a') as f:
+        print(f.keys())
 
 
 if __name__ == '__main__':
 
-    data = query_gridradar()
-    save_to_file(data)
+    parser = argparse.ArgumentParser(prog='Query ENF data from gridradar')
+    parser.add_argument('command', choices=['query', 'dump'])
+    args = parser.parse_args()
+
+    if args.command == 'query':
+        data = query_nationalgrideso()
+        if data is not None: save_to_file(data)
+    elif args.command == 'dump':
+        dump_file()

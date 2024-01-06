@@ -23,44 +23,6 @@ import requests
 import h5py
 
 
-
-def pmcc(x, y):
-    """Calculates the PMCC between x and y data points.
-
-    :param x: list of x values
-    :param y: list of y values, same length as x
-    :returns: PMCC of x and y, as a float
-    """
-    return np.corrcoef(x, y)[0][1]
-
-
-def sorted_pmccs(target, references):
-    """Calculates and sorts PMCCs between `target` and each of `references`.
-
-    :param target: list of target data points
-    :param references: list of lists of reference data points
-    :returns: list of tuples of (reference index, PMCC), sorted desc by PMCC
-    """
-    pmccs = [pmcc(target, r) for r in references]
-    sorted_pmccs = [(idx, v) for idx, v in sorted(enumerate(pmccs), key=lambda item: -item[1])]
-
-    return sorted_pmccs
-
-
-def search(target_enf, reference_enf):
-    """Calculates PMCCs between `target_enf` and each window in `reference_enf`.
-
-    :param target_enf: list of target's ENF values
-    :param reference_enf: list of reference's ENF values
-    :returns: list of tuples of (reference index, PMCC), sorted desc by PMCC
-    """
-    n_steps = len(reference_enf) - len(target_enf)
-    reference_enfs = (reference_enf[step:step+len(target_enf)] for step in range(n_steps))
-
-    coeffs = sorted_pmccs(target_enf, reference_enfs)
-    return coeffs
-
-
 def butter_bandpass_filter(data, locut, hicut, fs, order):
     """Passes input data through a Butterworth bandpass filter. Code borrowed from
     https://scipy-cookbook.readthedocs.io/items/ButterworthBandpass.html
@@ -93,7 +55,6 @@ def stft(data, fs):
     noverlap = fs * (window_size_seconds - 1)
     f, t, Zxx = signal.stft(data, fs, nperseg=nperseg, noverlap=noverlap)
     return f, t, Zxx
-
 
 
 def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
@@ -173,7 +134,6 @@ class EnfModel():
         self.enf = None
         self.databasePath = databasePath
         #self.fft = None
-        self.fft_freq = None
         self.fft_freq = None
         #self.nominal_freq = 50
         #self.freq_band_size = 0.2
@@ -404,16 +364,21 @@ class HumView(QMainWindow):
     """ Display ENF analysis and result."""
 
     def __init__(self, controller):
+        """Initialize variables and create widgets and menu."""
         super().__init__()
         self.controller = controller
-        self.audioCurve = None
-        self.gridFreqCurve = None
-        self.correlationCurve = None
+
+        self.enfAudioCurve = None          # ENF series of loaded audio file
+        self.clipSpectrumCurve = None            # Fourier transform of loaded audio file
+        self.endGridCurve = None       # ENF series of grid
+        self.correlationCurve = None    # Correlation of ENF series of audio clip and grid
+
         self.createWidgets()
         self.createMenu()
 
 
     def createWidgets(self):
+        """Create widgets including curves and legends for the plot widgets."""
         widget = QWidget()
         self.setWindowTitle("Hum")
 
@@ -434,15 +399,17 @@ class HumView(QMainWindow):
 
         self.tabs = QTabWidget()
 
-        self.fftPlot = pg.PlotWidget()
-        self.fftPlot.setLabel("left", "Amplitude")
-        self.fftPlot.setLabel("bottom", "Frequency (Hz)")
-        self.fftPlot.addLegend()
-        self.fftPlot.setBackground("w")
-        self.fftPlot.showGrid(x=True, y=True)
-        self.fftPlot.setXRange(0, 1000)
-        self.fftPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        self.tabs.addTab(self.fftPlot, "FFT")
+        self.clipSpectrumPlot = pg.PlotWidget()
+        self.clipSpectrumPlot.setLabel("left", "Amplitude")
+        self.clipSpectrumPlot.setLabel("bottom", "Frequency (Hz)")
+        self.clipSpectrumPlot.addLegend()
+        self.clipSpectrumPlot.setBackground("w")
+        self.clipSpectrumPlot.showGrid(x=True, y=True)
+        self.clipSpectrumPlot.setXRange(0, 1000)
+        self.clipSpectrumPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
+        self.clipSpectrumCurve = self.clipSpectrumPlot.plot(name="WAV file spectrum",
+                                           pen=pg.mkPen(color=(255, 0, 0)))
+        self.tabs.addTab(self.clipSpectrumPlot, "Clip Spectrum")
 
         # Widget showing the ENF values of a grid and an audio recording
         #
@@ -454,22 +421,27 @@ class HumView(QMainWindow):
         self.enfPlot.setBackground("w")
         self.enfPlot.showGrid(x=True, y=True)
         self.enfPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        self.tabs.addTab(self.enfPlot, "ENF")
+        self.enfAudioCurve = self.enfPlot.plot(name="ENF values of WAV file",
+                                               pen=pg.mkPen(color=(255, 0, 0)))
+        self.endGridCurve = self.enfPlot.plot(name="Grid frequency history",
+                                               pen=pg.mkPen(color=(0, 255, 0)))
+        self.tabs.addTab(self.enfPlot, "ENF Series")
 
         # Plots the correlation versus time offset
-        self.corrPlot = pg.PlotWidget()
-        self.corrPlot.setLabel("left", "correlation")
-        self.corrPlot.setLabel("bottom", "time lag [sec]")
-        self.corrPlot.addLegend()
-        self.corrPlot.setBackground("w")
-        self.corrPlot.showGrid(x=True, y=True)
-        self.corrPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        #self.corrPlot.setYRange(-1, +1)
-        self.tabs.addTab(self.corrPlot, "Correlation")
+        self.correlationPlot = pg.PlotWidget()
+        self.correlationPlot.setLabel("left", "correlation")
+        self.correlationPlot.setLabel("bottom", "time lag [sec]")
+        self.correlationPlot.addLegend()
+        self.correlationPlot.setBackground("w")
+        self.correlationPlot.showGrid(x=True, y=True)
+        self.correlationPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
+        #self.correlationPlot.setYRange(-1, +1)
+        self.correlationCurve = self.correlationPlot.plot(name="Correlation",
+                                                   pen=pg.mkPen(color=(255, 255, 0)))
+        self.tabs.addTab(self.correlationPlot, "Correlation")
 
         main_layout.addWidget(self.tabs)
 
-        main_layout.addLayout(grid_area)
         main_layout.addWidget(audio_group)
         main_layout.addWidget(analyse_group)
         main_layout.addWidget(grid_group)
@@ -562,6 +534,7 @@ class HumView(QMainWindow):
 
 
     def createMenu(self):
+        """Create a menu."""
         menuBar = QMenuBar(self)
         self.setMenuBar(menuBar)
 
@@ -585,8 +558,6 @@ class HumView(QMainWindow):
         dlg = SettingsDialog(self.controller.settings)
         if dlg.exec():
             print("Success!")
-            #dlg.save()
-            # self.controller.setDatabasePath(dlg.databasePath())
         else:
             print("Cancel!")
 
@@ -606,18 +577,14 @@ class HumView(QMainWindow):
         assert(type(audioRecording) == EnfModel)
 
         data = audioRecording.getENF()
-        pen = pg.mkPen(color=(255, 0, 0))
 
+        # Versuch -------------------------------------------
+        # Define legend and curve only once
         fft_t, fft_a = audioRecording.makeFFT()
-        self.fft_curve = self.fftPlot.plot(name="WAV file spectrum",
-                                           pen=pen)
-        self.fft_curve.setData(fft_t, fft_a)
+        self.clipSpectrumCurve.setData(fft_t, fft_a)
+        # ---------------------------------------------------
 
-        if self.audioCurve:
-            self.enfPlot.removeItem(self.audioCurve)
-        self.audioCurve = self.enfPlot.plot(name="ENF values of WAV file",
-                                               pen=pen)
-        self.audioCurve.setData(list(range(t_offset, len(data) + t_offset)),
+        self.enfAudioCurve.setData(list(range(t_offset, len(data) + t_offset)),
                                 data)
 
         self.e_duration.setText(str(audioRecording.duration()))
@@ -634,20 +601,11 @@ class HumView(QMainWindow):
         data = gridHistory.getENF()
         assert(data is not None and type(data) == np.ndarray)
 
-        pen = pg.mkPen(color=(0, 0, 255))
-
-        if self.gridFreqCurve:
-            self.enfPlot.removeItem(self.gridFreqCurve)
-        self.gridFreqCurve = self.enfPlot.plot(name="Grid frequency history", pen=pen)
-        self.gridFreqCurve.setData(list(range(len(data))), data)
+        self.endGridCurve.setData(list(range(len(data))), data)
 
 
     def plotCorrelation(self, t, corr):
-        pen = pg.mkPen(color=(0, 0, 255))
-
-        if self.correlationCurve:
-            self.enfPlot.removeItem(self.correlationCurve)
-        self.correlationCurve = self.corrPlot.plot(name="Correlation", pen=pen)
+        # FIXME: Old curves/legends are not removed from plot if a new oneis drawn
         self.correlationCurve.setData(list(range(len(corr))), corr)
 
 
@@ -677,6 +635,12 @@ class HumView(QMainWindow):
             self.e_duration.setText(str(self.controller.getDuration()))
             self.e_sampleRate.setText(str(self.controller.getSampleRate()))
 
+            # Clear all plots
+            self.enfAudioCurve.setData([], [])
+            self.correlationCurve.setData([], [])
+            self.clipSpectrumCurve.setData([], [])
+            self.endGridCurve.setData([], [])
+
         self.unsetCursor()
         self.setButtonStatus()
 
@@ -705,16 +669,17 @@ class HumView(QMainWindow):
         self.setCursor(Qt.WaitCursor)
 
         #harmonic = int(self.b_nominal_freq, self.b_band_size, self.b_harmonic.value())
-        if self.audioCurve:
+        if self.enfAudioCurve:
             # FIXME: Curve still visible
-            self.audioCurve.clear()
-            #self.enfPlot.removeItem(self.audioCurve)
-            #self.audioCurve = None
+            self.enfAudioCurve.clear()
+            #self.enfPlot.removeItem(self.enfAudioCurve)
+            #self.enfAudioCurve = None
         self.controller.onAnalyse(int(self.b_nominal_freq.currentText()),
                                 float(self.b_band_size.value()/1000),
                                 int(self.b_harmonic.value()))
 
         self.unsetCursor()
+        self.tabs.setCurrentIndex(1)
         self.setButtonStatus()
 
 
