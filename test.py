@@ -45,7 +45,7 @@ def test_gb_caching(delete_db):
     enf2 = g.getEnfSeries(2017, 2)
     assert enf2 is not None
     assert type(enf2) == np.ndarray
-    assert len(enf2) == 28 * 24 * 60 * 60
+    assert len(enf2) == len(enf1)
     t1 = datetime.datetime.utcnow()
     dt = t1 - t0
     assert dt.total_seconds() < 5, "Reading from DB should not take longer than 5 seconds"
@@ -55,3 +55,24 @@ def test_fi_bad_date():
     g = Fingrid('fingrid', testdb)
     enf = g.getEnfSeries(2000, 2)
     assert enf is None, "Not supported year"
+
+
+def test_fingrid_caching(delete_db):
+    """Download data from the Fingrid web site; check that caching in the
+    database works.
+
+    Note: Some values in the CSV files are missing, so the overall is lower
+    """
+    g = Fingrid('Fingrid', testdb)
+    enf1 = g.getEnfSeries(2017, 2)
+    assert enf1 is not None
+    assert type(enf1) == np.ndarray
+    assert len(enf1) > 80000
+    t0 = datetime.datetime.utcnow()
+    enf2 = g.getEnfSeries(2017, 2)
+    assert enf2 is not None
+    assert type(enf2) == np.ndarray
+    assert len(enf2) == len(enf1)
+    t1 = datetime.datetime.utcnow()
+    dt = t1 - t0
+    assert dt.total_seconds() < 5,"Reading from DB should not take longer than 5 seconds"
