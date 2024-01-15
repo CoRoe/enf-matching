@@ -21,6 +21,8 @@ import os
 import json
 import requests
 import h5py
+import griddata
+from griddata import GridDataAccessFactory
 
 
 def butter_bandpass_filter(data, locut, hicut, fs, order):
@@ -219,73 +221,9 @@ class EnfModel():
         assert(self.databasePath)
         assert(type(year) == int and year > 1970)
         assert(type(month) == int and month >= 1 and month <= 12)
-
-        fileName = f"{self.databasePath}/{location}.hp5"
-        timestamp = f"{year}-{month}-01 00:00:00"
-
-        # First check if the enf series is contained in the database
-        try:
-            with h5py.File(fileName, 'r') as f:
-                dset = f[timestamp]
-                self.enf = dset[()]
-                print(f"From database: {type(self.enf)}")
-        except:
-            if location == 'GB':
-                enf = self.loadNationalGridGB(location, year, month)
-                if enf is not None:
-                    assert(type(enf) == np.ndarray)
-                    print(f"National grid date is type {type(enf)}")
-                    self.enf = enf
-                    try:
-                        with h5py.File(fileName, 'w') as f:
-                            dset = f.create_dataset(timestamp, data=enf)
-                    except Exception as e:
-                        print("Failed to write enf to datebase:", e)
-        print()
-
-
-    def loadNationalGridGB(self, location, year, month):
-        """
-        Download ENF historical data from the GB National database.
-
-        :param location: ignored
-        :param year: year
-        :param month: month
-        :returns np.array with the ENF values or None if not found. ENF values
-        are the frequency in mHz.
-        """
-        arr = None
-        url = 'https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json'
-
-        ## Request execution and response reception
-        print(f"Querying {url} ...")
-        response = requests.get(url)
-        print(f"... Status: {response.status_code}")
-
-        ## Converting the JSON response string to a Python dictionary
-        if response.ok:
-            ret_data = response.json()['result']
-            try:
-                csv_resource = next(r for r in ret_data['resources']
-                                    if r['path'].endswith(f"/f-{year}-{month}.csv"))
-                print(f"Downloading {csv_resource['path']} ...")
-                response = requests.get(csv_resource['path'])
-                print(f"... Status: {response.status_code}")
-                try:
-                    print("Extracting frequencies ...")
-                    data = [uint16(float(row.split(',')[1]) * 1000) for row in
-                            response.text.split(os.linesep)[1:-1]]
-                    if data is None:
-                        print("No data")
-                    else:
-                        print(f"{len(data)} records")
-                        arr = np.array(data)
-                except Exception as e:
-                    print(e)
-            except Exception as e:
-                print(e)
-        print("End of loadGridEnf")
-        return arr
+        assert location != 'Test', "Handled elsewhere"
+        data_source = GridDataAccessFactory.getInstance(location, self.databasePath)
+        self.enf = data_source.getEnfSeries(year, month)
 
 
     def makeFFT(self):
@@ -396,11 +334,11 @@ class HumView(QMainWindow):
         self.endGridCurve = None       # ENF series of grid
         self.correlationCurve = None    # Correlation of ENF series of audio clip and grid
 
-        self.createWidgets()
-        self.createMenu()
+        self.__createWidgets()
+        self.__createMenu()
 
 
-    def createWidgets(self):
+    def __createWidgets(self):
         """Create widgets including curves and legends for the plot widgets."""
         widget = QWidget()
         self.setWindowTitle("Hum")
@@ -490,7 +428,10 @@ class HumView(QMainWindow):
 
         grid_area.addWidget(QLabel("Location"), 0, 0)
         self.l_country = QComboBox(self)
-        self.l_country.addItems(("Test", "GB"))
+        # self.l_country.addItems(("Test", "GB"))
+        for l in GridDataAccessFactory.enumLocations():
+            self.l_country.addItem(l)
+        self.l_country.addItem("Test")
         grid_area.addWidget(self.l_country, 0, 1)
         grid_area.addWidget(QLabel("Year"), 0, 2)
         self.l_year = QComboBox(self)
@@ -550,13 +491,13 @@ class HumView(QMainWindow):
         self.e_quality.setReadOnly(True)
         result_area.addWidget(self.e_quality, 1, 5)
 
-        self.setButtonStatus()
+        self.__setButtonStatus()
 
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
 
 
-    def createMenu(self):
+    def __createMenu(self):
         """Create a menu."""
         menuBar = QMenuBar(self)
         self.setMenuBar(menuBar)
@@ -585,7 +526,7 @@ class HumView(QMainWindow):
             print("Cancel!")
 
 
-    def setButtonStatus(self):
+    def __setButtonStatus(self):
         """ Enables or disables button depending on the model status."""
         audioDataLoaded = self.controller.audioData() is not None
         audioEnfLoaded = self.controller.audioENF() is not None
@@ -665,7 +606,7 @@ class HumView(QMainWindow):
             self.endGridCurve.setData([], [])
 
         self.unsetCursor()
-        self.setButtonStatus()
+        self.__setButtonStatus()
 
 
     def onLoadGridHistory(self):
@@ -680,11 +621,10 @@ class HumView(QMainWindow):
                                           int(self.b_nominal_freq.currentText()),
                                 float(self.b_band_size.value()/1000),
                                 int(self.b_harmonic.value()))
-        #self.gridHistory = GridHistoryModel(location, year, month)
 
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
-        self.setButtonStatus()
+        self.__setButtonStatus()
 
 
     def onAnalyse(self):
@@ -703,7 +643,7 @@ class HumView(QMainWindow):
 
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
-        self.setButtonStatus()
+        self.__setButtonStatus()
 
 
     def onMatch(self):
@@ -716,7 +656,7 @@ class HumView(QMainWindow):
         self.unsetCursor()
         now = datetime.datetime.now()
         print(f"{now} ... done")
-        self.setButtonStatus()
+        self.__setButtonStatus()
 
 
 class SettingsDialog(QDialog):

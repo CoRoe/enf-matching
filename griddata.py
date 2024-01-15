@@ -22,7 +22,29 @@ import struct as st
 # Each table has one row per month. Key has the format yyyy-mm, the data is an
 # array of uint16 with one entry per second.
 #
-class GridAdataAccess():
+
+
+class GridDataAccessFactory():
+    
+    locations = ['GB', 'FI']
+
+    @classmethod
+    def getInstance(cls, location, database_path):
+        if location == 'GB':
+            return GBNationalGrid(database_path)
+        elif location == 'FI':
+            return Fingrid(database_path)
+        else:
+            return None
+    
+    @classmethod
+    def enumLocations(cls):
+        for l in GridDataAccessFactory.locations:
+            yield l
+
+
+class GridDataAccess():
+
     def __init__(self, table_name, db_path):
         self.db_path = db_path
         self.table_name = table_name
@@ -82,11 +104,15 @@ class GridAdataAccess():
             print(e)
 
 
-    """Abstract superclass"""
-    def getProperties(self):
+    def getFromDate(self):
         """Return source, country, time resolution, time zone, from, to."""
         # TODO: Implement
-        pass
+        return "2015-01"
+
+    def getToDate(self):
+        """Return source, country, time resolution, time zone, from, to."""
+        # TODO: Implement
+        return "2020-01"
 
 
 # Zeilen der Form
@@ -103,12 +129,14 @@ class GridAdataAccess():
 # 2015-01-01 00:00:00.200,50.104
 #
 
-class Fingrid(GridAdataAccess):
-    def __init__(self, table_name, db_path):
-        super(Fingrid, self).__init__(table_name, db_path)
+class Fingrid(GridDataAccess):
+    table_name = 'Fingrid'
+
+    def __init__(self, db_path):
+        super(Fingrid, self).__init__(Fingrid.table_name, db_path)
 
         self.cursor = self.sql.cursor()
-        rc = self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {table_name} (date TEXT PRIMARY KEY, frequencies BLOB)")
+        rc = self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {Fingrid.table_name} (date TEXT PRIMARY KEY, frequencies BLOB)")
         rc = self.sql.commit()
         pass
 
@@ -217,13 +245,14 @@ class Fingrid(GridAdataAccess):
         return a
 
 
-class GBNationalGrid(GridAdataAccess):
+class GBNationalGrid(GridDataAccess):
+    table_name = 'GBNationalGrid'
 
-    def __init__(self, table_name, db_path):
-        super(GBNationalGrid, self).__init__(table_name, db_path)
+    def __init__(self, db_path):
+        super(GBNationalGrid, self).__init__(GBNationalGrid.table_name, db_path)
 
         self.cursor = self.sql.cursor()
-        rc = self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {table_name} (date TEXT PRIMARY KEY, frequencies BLOB)")
+        rc = self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {GBNationalGrid.table_name} (date TEXT PRIMARY KEY, frequencies BLOB)")
         rc = self.sql.commit()
         pass
 
@@ -273,8 +302,7 @@ class GBNationalGrid(GridAdataAccess):
 
 
 if __name__ == '__main__':
-    g = Fingrid("fingrid", "/tmp/hum.sqlite")
-    g# = GBNationalGrid('GBNationalGrid', "/tmp/hum.sqlite")
-    #g._query_db(2015, 1)
+    db_path = "/tmp/hum.sqlite"
+
+    g = GridDataAccessFactory.getInstance('FI', db_path)
     g.getEnfSeries(2017, 2)
-    #g.getEnfSeriesFromZipFile("/home/cro/Downloads/2015-01.zip", 2015, 1)
