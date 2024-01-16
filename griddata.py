@@ -12,6 +12,7 @@ import csv
 import numpy as np
 from scipy import signal
 import struct as st
+from _datetime import date
 
 
 #
@@ -25,7 +26,7 @@ import struct as st
 
 
 class GridDataAccessFactory():
-    
+
     locations = ['GB', 'FI']
 
     @classmethod
@@ -36,7 +37,7 @@ class GridDataAccessFactory():
             return Fingrid(database_path)
         else:
             return None
-    
+
     @classmethod
     def enumLocations(cls):
         for l in GridDataAccessFactory.locations:
@@ -104,17 +105,6 @@ class GridDataAccess():
             print(e)
 
 
-    def getFromDate(self):
-        """Return source, country, time resolution, time zone, from, to."""
-        # TODO: Implement
-        return "2015-01"
-
-    def getToDate(self):
-        """Return source, country, time resolution, time zone, from, to."""
-        # TODO: Implement
-        return "2020-01"
-
-
 # Zeilen der Form
 # <a class="heading" href="/en/dataset/frequency-historical-data/resource/65885c01-8199-4c8a-9679-c0002b894b9a" title="Taajuusmittausdata 2015-01">
 # extrahieren
@@ -139,6 +129,31 @@ class Fingrid(GridDataAccess):
         rc = self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {Fingrid.table_name} (date TEXT PRIMARY KEY, frequencies BLOB)")
         rc = self.sql.commit()
         pass
+
+
+    def getDateRange(self):
+        url ='https://data.fingrid.fi/en/dataset/frequency-historical-data'
+        pattern = re.compile(r"(\d+)-(\d+)\.(zip|7z)")
+        fromDate = (9999, 9999)
+        toDate = (0, 0)
+
+        print(f"Querying {url}...")
+        response = requests.get(url)
+        print(f"... Status: {response.status_code}")
+        if response.ok:
+            ret_data = response.text
+            #print(ret_data)
+            soup = BeautifulSoup(ret_data, "html.parser")
+            res = soup.find_all('a', class_='resource-url-analytics')
+            for r in res:
+                #print(r['href'])
+                m = pattern.search(r['href'])
+                if m:
+                    #print(m.group(1), m.group(2))
+                    d = (int(m.group(1)), m.group(2))
+                    if d < fromDate: fromDate = d
+                    if d > toDate: toDate = d
+        return f"{fromDate[0]}-{fromDate[1]}", f"{toDate[0]}-{toDate[1]}"
 
 
     def _downloadFromInternet(self, year, month):
@@ -255,6 +270,31 @@ class GBNationalGrid(GridDataAccess):
         rc = self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {GBNationalGrid.table_name} (date TEXT PRIMARY KEY, frequencies BLOB)")
         rc = self.sql.commit()
         pass
+
+
+    def getDateRange(self):
+        url = 'https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json'
+        pattern = re.compile(r"(\d+)-(\d+)\.csv$")
+        fromDate = (9999, 9999)
+        toDate = (0, 0)
+
+        ## Request execution and response reception
+        print(f"Querying {url} ...")
+        response = requests.get(url)
+        print(f"... Status: {response.status_code}")
+
+        ## Converting the JSON response string to a Python dictionary
+        if response.ok:
+            ret_data = response.json()['result']['resources']
+            for d in ret_data:
+                m = pattern.search(d['path'])
+                if m:
+                    print(m.group(1), m.group(2))
+                    date = (int(m.group(1)), int(m.group(2)))
+                    if date < fromDate: fromDate = date
+                    if date > toDate: toDate = date
+
+        return f"{fromDate[0]}-{fromDate[1]:02}", f"{toDate[0]}-{toDate[1]:02}"
 
 
     def _downloadFromInternet(self, year, month):

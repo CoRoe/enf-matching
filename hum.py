@@ -109,7 +109,7 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
         },
         'stft': {
             'f': f,
-            't': t,
+            'tablew': t,
             'Zxx': Zxx,
         },
         'enf': [f/float(harmonic_n) for f in max_freqs],
@@ -496,12 +496,16 @@ class HumView(QMainWindow):
         menuBar = QMenuBar(self)
         self.setMenuBar(menuBar)
 
+        file_menu = menuBar.addMenu("&File")
+
         b_open = QAction("&Open project", self)
         b_open.setStatusTip("Open a project")
         b_save = QAction("&Save project", self)
         b_save.setStatusTip("Save the project")
+        showEnfSourcesAction = QAction("Show &ENF sources", self)
+        showEnfSourcesAction.triggered.connect(self.__showEnfSources)
 
-        file_menu = menuBar.addMenu("&File")
+        file_menu.addAction(showEnfSourcesAction)
         file_menu.addAction(b_open)
         file_menu.addAction(b_save)
 
@@ -517,6 +521,14 @@ class HumView(QMainWindow):
         # TODO: Sort out settings. Probbly call 'newSettings' method of all
         # embbeded objects.
         dlg = SettingsDialog(self.settings)
+        if dlg.exec():
+            print("Success!")
+        else:
+            print("Cancel!")
+
+
+    def __showEnfSources(self):
+        dlg = ShowEnfSourcesDlg(self)
         if dlg.exec():
             print("Success!")
         else:
@@ -661,6 +673,47 @@ class HumView(QMainWindow):
         now = datetime.datetime.now()
         print(f"{now} ... done")
         self.__setButtonStatus()
+
+
+class ShowEnfSourcesDlg(QDialog):
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        columns = ("Grid/country", "From", "To")
+        locations = [r for r in GridDataAccessFactory.enumLocations()]
+
+        self.setWindowTitle("ENF Data Sources")
+
+        self.layout = QVBoxLayout()
+
+        self.layout.addWidget(QLabel("Available date range for each grid/country:"))
+
+        self.table_layout = QGridLayout()
+
+        # Column headers
+        for i in range(len(columns)):
+            h = QLabel(columns[i])
+            h.setStyleSheet("font-weight: bold")
+            self.table_layout.addWidget(h, 0, i)
+
+        # Rows
+        for i in range(len(locations)):
+            f = GridDataAccessFactory.getInstance(locations[i], parent.databasePath)
+            fromDate, toDate = f.getDateRange()
+            self.table_layout.addWidget(QLabel(locations[i]), i+1, 0)
+            self.table_layout.addWidget(QLabel(fromDate), i+1, 1)
+            #self.table_layout.addWidget(QLineEdit(fromDate), i+1, 1)
+            self.table_layout.addWidget(QLabel(toDate), i+1, 2)
+
+        self.layout.addLayout(self.table_layout)
+
+        QBtn = QDialogButtonBox.Ok
+        self.buttonBox = QDialogButtonBox(QBtn)
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+        self.layout.addWidget(self.buttonBox)
+
+        self.setLayout(self.layout)
 
 
 class SettingsDialog(QDialog):
