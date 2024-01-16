@@ -8,20 +8,16 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QVBoxLayout, QLineEdit, QFileDialog, QLabel,
                              QPushButton, QGroupBox, QGridLayout,
                              QComboBox, QSpinBox, QTabWidget,
-                             QMenu, QMenuBar, QAction, QDialog,
+                             QMenuBar, QAction, QDialog,
                              QDialogButtonBox)
-from PyQt5.Qt import Qt, QIcon
+from PyQt5.Qt import Qt
 
 from scipy import signal, fft, spatial
-from numpy import uint16
 import wave
 import numpy as np
 import datetime
 import os
 import json
-import requests
-import h5py
-import griddata
 from griddata import GridDataAccessFactory
 
 
@@ -135,11 +131,7 @@ class EnfModel():
         self.data = None
         self.enf = None
         self.databasePath = databasePath
-        #self.fft = None
         self.fft_freq = None
-        #self.nominal_freq = 50
-        #self.freq_band_size = 0.2
-        #self.t0 = datetime.datetime(0, 0, 0)
 
 
     def setDatabasePath(self, path):
@@ -163,6 +155,7 @@ class EnfModel():
                 ds_factor = int(self.fs / 8000)
                 assert(ds_factor * 8000 == self.fs)
                 self.data = None
+
                 # Read chunks, downsample them
                 wav_buf = wav_f.readframes(1000000)
                 while len(wav_buf) > 0:
@@ -205,7 +198,6 @@ class EnfModel():
         self.stft = self.enf_output['stft']
 
         # ENF are the ENF values
-        # self.enf = self.enf_output['enf']
         enf = [int(e * 1000) for e in self.enf_output['enf']]
         self.enf = np.array(enf)
         # print(self.enf[0:5])
@@ -310,9 +302,9 @@ class EnfModel():
         return self.fft_freq, self.fft_ampl
 
 
-    def duration(self):
+    def getDuration(self):
         """ Length of the clip in seconds."""
-        assert(self.enf is not None)
+        #assert(self.enf is not None)
         return self.clip_len_s
 
 
@@ -324,15 +316,19 @@ class EnfModel():
 class HumView(QMainWindow):
     """ Display ENF analysis and result."""
 
-    def __init__(self, controller):
+    def __init__(self):
         """Initialize variables and create widgets and menu."""
         super().__init__()
-        self.controller = controller
+        self.model = None
+        self.gm = None
+        self.settings = Settings()
+        self.databasePath = self.settings.databasePath()
 
-        self.enfAudioCurve = None          # ENF series of loaded audio file
-        self.clipSpectrumCurve = None            # Fourier transform of loaded audio file
-        self.endGridCurve = None       # ENF series of grid
-        self.correlationCurve = None    # Correlation of ENF series of audio clip and grid
+        self.enfAudioCurve = None     # ENF series of loaded audio file
+        self.clipSpectrumCurve = None # Fourier transform of loaded audio file
+        self.endGridCurve = None      # ENF series of grid
+        self.correlationCurve = None  # Correlation of ENF series of audio
+                                      # clip and grid
 
         self.__createWidgets()
         self.__createMenu()
@@ -396,7 +392,6 @@ class HumView(QMainWindow):
         self.correlationPlot.setBackground("w")
         self.correlationPlot.showGrid(x=True, y=True)
         self.correlationPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        #self.correlationPlot.setYRange(-1, +1)
         self.correlationCurve = self.correlationPlot.plot(name="Correlation",
                                                    pen=pg.mkPen(color=(255, 255, 0)))
         self.tabs.addTab(self.correlationPlot, "Correlation")
@@ -410,7 +405,7 @@ class HumView(QMainWindow):
 
         self.b_load = QPushButton("Load")
         self.b_load.setToolTip("Load a WAV file to analyse.")
-        self.b_load.clicked.connect(self.onOpenWavFile)
+        self.b_load.clicked.connect(self._onOpenWavFileClicked)
         audio_area.addWidget(self.b_load, 0, 0)
         self.e_fileName = QLineEdit()
         self.e_fileName.setReadOnly(True)
@@ -428,7 +423,6 @@ class HumView(QMainWindow):
 
         grid_area.addWidget(QLabel("Location"), 0, 0)
         self.l_country = QComboBox(self)
-        # self.l_country.addItems(("Test", "GB"))
         for l in GridDataAccessFactory.enumLocations():
             self.l_country.addItem(l)
         self.l_country.addItem("Test")
@@ -445,7 +439,7 @@ class HumView(QMainWindow):
         grid_area.addWidget(self.l_month, 0, 5)
         self.b_loadGridHistory = QPushButton("Load")
         grid_area.addWidget(self.b_loadGridHistory, 1, 0)
-        self.b_loadGridHistory.clicked.connect(self.onLoadGridHistory)
+        self.b_loadGridHistory.clicked.connect(self.__onLoadGridHistoryClicked)
         grid_area.setColumnStretch(6, 1)
 
         analyse_area.addWidget(QLabel("Nominal grid freq"), 0, 0)
@@ -469,11 +463,11 @@ class HumView(QMainWindow):
         analyse_area.setColumnStretch(6, 1)
 
         self.b_analyse = QPushButton("Analyse")
-        self.b_analyse.clicked.connect(self.onAnalyse)
+        self.b_analyse.clicked.connect(self.__onAnalyseClicked)
         analyse_area.addWidget(self.b_analyse, 1, 0)
 
         self.b_match = QPushButton("Match")
-        self.b_match.clicked.connect(self.onMatch)
+        self.b_match.clicked.connect(self.__onMatchClicked)
         result_area.addWidget(self.b_match, 0, 0)
         self.cb_algo = QComboBox()
         self.cb_algo.addItems(('Pearson', 'Euclidian'))
@@ -514,12 +508,15 @@ class HumView(QMainWindow):
         editMenu = menuBar.addMenu("&Edit")
 
         editSettingsAction = QAction("&Settings", self)
-        editSettingsAction.triggered.connect(self.editSettings)
+        editSettingsAction.triggered.connect(self.__editSettings)
         editMenu.addAction(editSettingsAction)
 
 
-    def editSettings(self):
-        dlg = SettingsDialog(self.controller.settings)
+    def __editSettings(self):
+        """Menu item; pops up a 'setting' dialog."""
+        # TODO: Sort out settings. Probbly call 'newSettings' method of all
+        # embbeded objects.
+        dlg = SettingsDialog(self.settings)
         if dlg.exec():
             print("Success!")
         else:
@@ -528,15 +525,15 @@ class HumView(QMainWindow):
 
     def __setButtonStatus(self):
         """ Enables or disables button depending on the model status."""
-        audioDataLoaded = self.controller.audioData() is not None
-        audioEnfLoaded = self.controller.audioENF() is not None
-        gridEnfLoaded = self.controller.gridENF() is not None
+        audioDataLoaded = self.model is not None and self.model.getData() is not None
+        audioEnfLoaded = self.model is not None and self.model.getENF() is not None
+        gridEnfLoaded = self.gm is not None and self.gm.getENF() is not None
 
         self.b_analyse.setEnabled(audioDataLoaded)
         self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
 
 
-    def plotAudioRec(self, audioRecording, t_offset=0):
+    def __plotAudioRec(self, audioRecording, t_offset=0):
         """ Plot the ENF values of an audio recording."""
         assert(type(audioRecording) == EnfModel)
 
@@ -551,15 +548,16 @@ class HumView(QMainWindow):
         self.enfAudioCurve.setData(list(range(t_offset, len(data) + t_offset)),
                                 data)
 
-        self.e_duration.setText(str(audioRecording.duration()))
+        #self.e_duration.setText(str(audioRecording.duration()))
         self.e_sampleRate.setText(str(audioRecording.sampleRate()))
 
 
-    def plotGridHistory(self, gridHistory):
+    def __plotGridHistory(self, gridHistory):
         """ Plot the grid frequency history.
 
         :param: gridHistory - instanceof the grid history model
         """
+        # FIXME: Remove curve if gridhistory is None
         assert(type(gridHistory == EnfModel))
 
         data = gridHistory.getENF()
@@ -568,12 +566,12 @@ class HumView(QMainWindow):
         self.endGridCurve.setData(list(range(len(data))), data)
 
 
-    def plotCorrelation(self, t, corr):
+    def __plotCorrelation(self, t, corr):
         # FIXME: Old curves/legends are not removed from plot if a new oneis drawn
         self.correlationCurve.setData(list(range(len(corr))), corr)
 
 
-    def showMatches(self, t, q, corr):
+    def __showMatches(self, t, q, corr):
         # print("Show matches")
         duration = self.controller.getDuration()
 
@@ -581,10 +579,10 @@ class HumView(QMainWindow):
         self.e_quality.setText(str(q))
         self.enfPlot.setXRange(t, t + duration, padding=1)
 
-        self.plotCorrelation(t, corr)
+        self.__plotCorrelation(t, corr)
 
 
-    def onOpenWavFile(self):
+    def _onOpenWavFileClicked(self):
         """ Choose a WAV file woth an audio recording."""
         self.setCursor(Qt.WaitCursor)
 
@@ -594,10 +592,12 @@ class HumView(QMainWindow):
                                                   "","WAV Files (*.wav);;all files (*)",
                                                   options=options)
         if fileName and fileName != '':
-            self.controller.loadAudioFile(fileName)
+            self.model = EnfModel(self.databasePath)
+            #self.model.loadAudioFile(fileName)
+            self.model.fromWaveFile(fileName)
             self.e_fileName.setText(fileName)
-            self.e_duration.setText(str(self.controller.getDuration()))
-            self.e_sampleRate.setText(str(self.controller.getSampleRate()))
+            self.e_duration.setText(str(self.model.getDuration()))
+            self.e_sampleRate.setText(str(self.model.sampleRate()))
 
             # Clear all plots
             self.enfAudioCurve.setData([], [])
@@ -609,49 +609,53 @@ class HumView(QMainWindow):
         self.__setButtonStatus()
 
 
-    def onLoadGridHistory(self):
+    def __onLoadGridHistoryClicked(self):
         """ Gets historical ENF values from an ENF database. Called when the 'load' button
         in the 'grid' field is clicked."""
         self.setCursor(Qt.WaitCursor)
 
+        # TODO: Clear old grid history plot
+
         location = self.l_country.currentText()
         year = int(self.l_year.currentText())
         month = self.l_month.currentIndex() + 1
-        self.controller.onLoadGridHistory(location, year, month,
-                                          int(self.b_nominal_freq.currentText()),
-                                float(self.b_band_size.value()/1000),
-                                int(self.b_harmonic.value()))
-
+        self.gm = EnfModel(self.settings.databasePath())
+        if location == 'Test':
+            self.gm.fromWaveFile("71000_ref.wav")
+            self.gm.makeEnf(int(self.b_nominal_freq.currentText()),
+                            float(self.b_band_size.value()/1000),
+                            int(self.b_harmonic.value()))
+        else:
+            self.gm.loadGridEnf(location, year, month)
+        if self.gm.enf is not None:
+            self.__plotGridHistory(self.gm)
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
         self.__setButtonStatus()
 
 
-    def onAnalyse(self):
+    def __onAnalyseClicked(self):
         """ Called when the 'analyse' button is pressed. """
         self.setCursor(Qt.WaitCursor)
 
         #harmonic = int(self.b_nominal_freq, self.b_band_size, self.b_harmonic.value())
-        if self.enfAudioCurve:
-            # FIXME: Curve still visible
-            self.enfAudioCurve.clear()
-            #self.enfPlot.removeItem(self.enfAudioCurve)
-            #self.enfAudioCurve = None
-        self.controller.onAnalyse(int(self.b_nominal_freq.currentText()),
-                                float(self.b_band_size.value()/1000),
-                                int(self.b_harmonic.value()))
-
+        #if self.enfAudioCurve:
+        #    self.enfAudioCurve.clear()
+        self.model.makeEnf(int(self.b_nominal_freq.currentText()),
+                           float(self.b_band_size.value()/1000),
+                           int(self.b_harmonic.value()))
+        self.__plotAudioRec(self.model)
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
         self.__setButtonStatus()
 
 
-    def onMatch(self):
+    def __onMatchClicked(self):
         """Called when the 'match' button is clicked."""
         self.setCursor(Qt.WaitCursor)
         now = datetime.datetime.now()
         print(f"{now} ... starting")
-        self.controller.onMatch(self.cb_algo.currentText())
+        self.controller.__onMatchClicked(self.cb_algo.currentText())
         self.tabs.setCurrentIndex(1)
         self.unsetCursor()
         now = datetime.datetime.now()
@@ -679,17 +683,14 @@ class SettingsDialog(QDialog):
         layout = QGridLayout()
         top_layout.addLayout(layout)
         top_layout.addWidget(self.buttonBox)
-        layout.addWidget(QLabel("Database directory:"), 0, 0)
+        layout.addWidget(QLabel("Database path:"), 0, 0)
         self.e_databasePath = QLineEdit()
         layout.addWidget(self.e_databasePath, 0, 1)
         self.e_databasePath.setToolTip("Path where downlaeded ENF data are stored")
         self.setLayout(top_layout)
 
-        #self.__load()
-        #self.__setDefaults()
-        #self.settings = self.settings0
-
         self.e_databasePath.setText(self.settings.databasePath())
+
 
     def save(self):
         self.settings.setDatabasePath(self.e_databasePath.text())
@@ -700,7 +701,7 @@ class SettingsDialog(QDialog):
 class Settings():
     """ Keep track of settings."""
 
-    template = {"databasepath": "/tmp"}
+    template = {"databasepath": "/tmp/hum.sqlite"}
 
     def __init__(self):
         """ Initialise the setting.
@@ -709,7 +710,7 @@ class Settings():
         If it does not exist or is malformed, default values are used. Internally, the values are
         stored in a dict.
         """
-        print("Load settings ...")
+        print("Loading settings ...")
 
         # File where settings are stored
         self.settingsPath = os.path.expanduser("~") + "/.hum.json"
@@ -770,78 +771,10 @@ class HumController(QApplication):
     """ Orchestrate view and model. """
     def __init__(self, argv):
         super(HumController, self).__init__(argv)
-        self.model = None
-        self.gm = None
-        self.settings = Settings()
-        self.view = HumView(self)
+        self.view = HumView()
 
     def show(self):
         self.view.show()
-
-    def loadAudioFile(self, fileName):
-        """ Create a model from an audio recoding and tell the view to show
-        it."""
-        self.model = EnfModel(self.settings.databasePath())
-        self.model.fromWaveFile(fileName)
-
-    def onLoadGridHistory(self, location, year, month, nominal_freq,
-                          freq_band_size, harmonic):
-        assert(type(year) == int and year > 1970)
-        assert(type(month) == int and month >= 1 and month <= 12)
-        assert(type(nominal_freq) == int and nominal_freq in (50, 60))
-
-        self.gm = EnfModel(self.settings.databasePath())
-        if location == 'Test':
-            self.gm.fromWaveFile("71000_ref.wav")
-            self.gm.makeEnf(nominal_freq, freq_band_size, harmonic)
-        elif location == 'GB':
-            self.gm.loadGridEnf(location, year, month)
-        if self.gm.enf is not None:
-            self.view.plotGridHistory(self.gm)
-
-    def onAnalyse(self, nominal_freq, freq_band_size, harmonic):
-        # TODO: Sollte nur das Audio-Model analysieren
-        if self.model is not None:
-            self.model.makeEnf(nominal_freq, freq_band_size, harmonic)
-            #m = self.model.match(self.gm)
-            #self.view.showMatches(m)
-            self.view.plotAudioRec(self.model)
-
-    def onMatch(self, algo):
-        # TODO: onAnalyse() und onMatch() auseinandersortieren.
-        if self.model and self.gm:
-            assert(algo in ('Pearson', 'Euclidian'))
-            if algo == 'Pearson':
-                t, q, corr = self.model.matchPearson(self.gm)
-            else:
-                t, q, corr = self.model.matchEuclid(self.gm)
-            self.view.showMatches(t, q, corr)
-            self.view.plotAudioRec(self.model, t_offset=t)
-
-    def getDuration(self):
-        return self.model.clip_len_s
-
-    def getSampleRate(self):
-        return self.model.fs
-
-    def audioData(self):
-        return self.model.getData() if self.model is not None else None
-
-    def audioENF(self):
-        return self.model.getENF() if self.model is not None else None
-
-    def gridENF(self):
-        return self.gm.getENF() if self.gm is not None else None
-
-    def setDatabasePath(self, path):
-        self.model.setDatabasePath(path)
-        self.gm.setDatabasePath(path)
-
-    def getSettings(self):
-        print()
-
-    def updateSettings(self):
-        print()
 
 
 #
