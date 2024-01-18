@@ -70,8 +70,6 @@ file is very long, and my humble Linux notebook ran out of memory during the
 signal processing. I had to shorted the reference file, see the call to ffmpeg
 in https://github.com/CoRoe/enf-matching/blob/main/bin/download-example-files.
 
-Using actual grid frequency data is not yet implemented.
-
 # See also
 
 https://robertheaton.com/enf/
