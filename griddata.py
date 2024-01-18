@@ -7,12 +7,15 @@ import io
 import os
 import re
 import zipfile
+import py7zr
 import sqlite3 as sq
 import csv
 import numpy as np
 from scipy import signal
 import struct as st
 from _datetime import date
+from twisted.spread.pb import respond
+from samba.dcerpc.dcerpc import response
 
 
 #
@@ -45,6 +48,7 @@ class GridDataAccessFactory():
 
 
 class GridDataAccess():
+    """Super class"""
 
     def __init__(self, table_name, db_path):
         self.db_path = db_path
@@ -64,12 +68,133 @@ class GridDataAccess():
             # Is in database
             return data
         else:
-            # Download from internet; the call is delegated to the derived,
+            # Get the URL of the actual data file; the call is delegated to the derived,
             # grid-specific class
-            data = self._downloadFromInternet(year, month)
-            if data is not None:
-                self.__save_to_db(data, year, month)
+            data = None
+            url, daily, dec = self._getDateUrl(year, month)
+            if url:
+                rawdata = self.__downloadFile(url)
+                if rawdata:
+                    suffix = url.split('.')[-1]
+                    if suffix == 'csv':
+                        data = self.__processCsv(rawdata)
+                    elif suffix == '7z':
+                        data = self.__process7zData(rawdata, daily, dec)
+                    elif suffix == 'zip':
+                        data = self.__processZipData(rawdata, daily, dec)
+                    else:
+                        print(f"Unknown file type {suffix}")
+                    if data is not None:
+                        self.__save_to_db(data, year, month)
             return data
+
+
+    def __downloadFile(self, url):
+        print(f"Querying {url}...")
+        response = requests.get(url)
+        print(f"... Status: {response.status_code}")
+        if response.ok:
+            return response.content
+        else:
+            return None
+
+
+    def __processCsv(self, csv: bytes):
+        print("Extracting frequencies ...")
+        assert type(csv) == bytes
+
+        # Split the input data into rows and use the second item of each row.
+        # The first row is supposed to contain the CSV header and is ignored.
+        data = [np.uint16(float(row.split(b',')[1]) * 1000) for row in
+                csv.splitlines()[1:]]
+        if data is None:
+            print("No data")
+            return data
+        else:
+            print(f"{len(data)} records")
+            arr = np.array(data)
+            return arr
+
+
+    def __process7zData(self, buffer, daily, decimationFactor):
+        """Extract ENF values from a buffer with compressed CSV data.
+
+        :param buffer: Buffer with compressed CSV files, in other words, a
+        compressed file loaded into memory.
+        :param decimationFactor: The CSV file may contain a higher temporal
+        resulution that seconds.
+
+        Assumption is that *buffer* contains one CSV file per day."""
+        print("__process7zData")
+        assert type(buffer) == bytes
+        assert type(daily) == bool
+        assert decimationFactor is None or type(decimationFactor) == int
+
+        b = io.BytesIO(buffer)
+        with py7zr.SevenZipFile(b, 'r') as archive:
+            if daily:
+                fn_pattern = re.compile(r"\d{4}-\d{2}-(\d{2})\.csv$")
+                month_data_list = [None] * 32
+
+                for fname, bio in archive.readall().items():
+                    print(f'{fname}')
+                    m = fn_pattern.search(fname)
+                    if m:
+                        csv = bio.read()
+                        data = [np.uint16(float(row.split(b',')[1]) * 1000) for row in
+                                   csv.splitlines()[1:]]
+                        if decimationFactor:
+                            data = signal.decimate(data, decimationFactor).astype(np.uint16)
+                        month_data_list[int(m.group(1))] = data
+                # month_data_list contains ENF data per day
+                monthly_total = np.array([enf_value for per_day_list in
+                                          month_data_list if per_day_list is not None
+                                          for enf_value in per_day_list])
+                print(f"Length of monthly_total is {len(monthly_total)}")
+                assert type(monthly_total) == np.ndarray
+                return monthly_total
+            else:
+                fn_pattern = re.compile(r"\d{4}-\d{2}\.csv")
+                print("### not daily")
+
+
+    def __processZipData(self, buffer, daily, decimationFactor):
+        """Extract ENF values from a buffer with compressed CSV data.
+
+        :param buffer: Buffer with compressed CSV files, in other words, a
+        compressed file loaded into memory.
+        :param decimationFactor: The CSV file may contain a higher temporal
+        resulution that seconds.
+
+        Assumption is that *buffer* contains one CSV file per day."""
+        print("__process7zData")
+        assert type(buffer) == bytes
+        assert type(daily) == bool
+        assert decimationFactor is None or type(decimationFactor) == int
+
+        with zipfile.ZipFile(io.BytesIO(buffer)) as archive:
+            if daily:
+                for fname in archive.namelist():
+                    print(fname)
+                    month_data_list = [None] * 32
+                    fn_pattern = re.compile(r"\d{4}-\d{2}-(\d{2})\.csv$")
+                    m = fn_pattern.search(fname)
+                    if m:
+                        csv = archive.read(fname)
+                        data = [np.uint16(float(row.split(b',')[1]) * 1000) for row in
+                                   csv.splitlines()[1:]]
+                        if decimationFactor:
+                            data = signal.decimate(data, decimationFactor).astype(np.uint16)
+                        month_data_list[int(m.group(1))] = data
+                # month_data_list contains ENF data per day
+                monthly_total = np.array([enf_value for per_day_list in
+                                          month_data_list if per_day_list is not None
+                                          for enf_value in per_day_list])
+                print(f"Length of monthly_total is {len(monthly_total)}")
+                assert type(monthly_total) == np.ndarray
+                return monthly_total
+            else:
+                print("Not supported")
 
 
     def __query_db(self, year, month):
@@ -156,80 +281,7 @@ class Fingrid(GridDataAccess):
         return f"{fromDate[0]}-{fromDate[1]}", f"{toDate[0]}-{toDate[1]}"
 
 
-    def _downloadFromInternet(self, year, month):
-        """Download ENF data from the internet.
-        :param year: year
-        :param month: Month
-        :returns: Sequence of ENF values
-        """
-        zipurl = self.__getURL(year, month)
-        print("Downloading zip file from", zipurl)
-        if zipurl:
-            response = requests.get(zipurl)
-            print(f"... Status: {response.status_code}")
-            with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
-                data = self.__data_from_open_zip_file(zf, year, month)
-                return data
-        else:
-            return None
-
-
-    def getEnfSeriesFromZipFile(self, zip_name, year: int, month: int):
-        """Instead of dowloading a ZIP file open one already stored in file
-        system and process it.
-
-        :param zip_name: Path of the ZIP file.
-        :param year:
-        :param month: 1..12
-        """
-        assert(month >= 1 and month <= 12)
-
-        zf = zipfile.ZipFile(zip_name)
-        return self.__data_from_open_zip_file(zf, year, month)
-
-
-    def __data_from_open_zip_file(self, zf, year, month):
-        """Extract data from an open ZIP file.
-
-        :param zf: The open ZIP file; it refers to either a buffer with
-        downloaded data or a disk file.
-        :param year:
-        :param month:
-
-        The ZIP file contains a number of CSV encoded files, one for each day.
-        Extract the ENF data from each file and combine them into one large
-        array.
-        """
-        fn_pattern = re.compile(r"\d{4}-\d+-\d+$")
-        month_data_list = [None] * 31
-
-        print ("Uncompressing and reading data... ")
-
-        for csv_file_info in zf.infolist():
-            print(csv_file_info.filename)
-            key = csv_file_info.filename[:-4]            # Strip the suffix '.csv'
-            with zf.open(csv_file_info.filename, 'r') as csv_file:
-                # Check if the filename is like yyyy-mm-dd
-                if fn_pattern.match(key):
-                    dataset = self.__processCSV(csv_file)
-                    day = int(key[8:10])
-                    d_dataset = signal.decimate(dataset, 10).astype(np.uint16)
-                    if len(d_dataset) != 86400:
-                        print(f"Warning: {csv_file_info.filename} has {len(d_dataset)} elements")
-                    # assert len(d_dataset) == 86400
-                    #print(len(dataset), len(d_dataset))
-                    month_data_list[day - 1] = d_dataset
-
-        # month_data_list contains ENF data per day
-        monthly_total = np.array([enf_value for per_day_list in
-                                  month_data_list if per_day_list is not None
-                                  for enf_value in per_day_list])
-        print(f"Length of monthly_total is {len(monthly_total)}")
-        assert type(monthly_total) == np.ndarray
-        return monthly_total
-
-
-    def __getURL(self, year: int, month: int):
+    def _getDateUrl(self, year: int, month: int):
         assert type(year) == int and type(month) == int, "should be integers"
         url ='https://data.fingrid.fi/en/dataset/frequency-historical-data'
         print(f"Querying {url}...")
@@ -243,12 +295,12 @@ class Fingrid(GridDataAccess):
             for r in res:
                 #print(r['href'])
                 url = r['href']
-                if url.endswith(f"{year:4}-{month:02}.zip"):
-                    return url
-        return None
+                if url.endswith(f"{year:4}-{month:02}.zip") or url.endswith(f"{year:4}-{month:02}.7z"):
+                    return url, True, 10
+        return None, None, None
 
 
-    def __processCSV(self, fp):
+    def __processCSV_unused(self, fp):
         """Process a CSV file.
 
         :param fp: The open CSV file.
@@ -289,7 +341,7 @@ class GBNationalGrid(GridDataAccess):
             for d in ret_data:
                 m = pattern.search(d['path'])
                 if m:
-                    print(m.group(1), m.group(2))
+                    #print(m.group(1), m.group(2))
                     date = (int(m.group(1)), int(m.group(2)))
                     if date < fromDate: fromDate = date
                     if date > toDate: toDate = date
@@ -297,7 +349,7 @@ class GBNationalGrid(GridDataAccess):
         return f"{fromDate[0]}-{fromDate[1]:02}", f"{toDate[0]}-{toDate[1]:02}"
 
 
-    def _downloadFromInternet(self, year, month):
+    def _getDateUrl(self, year, month):
         """
         Download ENF historical data from the GB National Grid database.
 
@@ -307,7 +359,6 @@ class GBNationalGrid(GridDataAccess):
         :returns np.array with the ENF values or None if not found. ENF values
         are the frequency in mHz.
         """
-        arr = None
         url = 'https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json'
 
         ## Request execution and response reception
@@ -320,29 +371,22 @@ class GBNationalGrid(GridDataAccess):
             ret_data = response.json()['result']
             try:
                 csv_resource = next(r for r in ret_data['resources']
-                                    if r['path'].endswith(f"/f-{year}-{month}.csv"))
-                print(f"Downloading {csv_resource['path']} ...")
-                response = requests.get(csv_resource['path'])
-                print(f"... Status: {response.status_code}")
-                try:
-                    print("Extracting frequencies ...")
-                    data = [np.uint16(float(row.split(',')[1]) * 1000) for row in
-                            response.text.split(os.linesep)[1:-1]]
-                    if data is None:
-                        print("No data")
-                    else:
-                        print(f"{len(data)} records")
-                        arr = np.array(data)
-                except Exception as e:
-                    print(e)
+                                    if r['path'].endswith(f"-{year}-{month}.csv"))
+                return csv_resource['path'], False, None
             except Exception as e:
                 print(e)
+                return None, False, None
         print("End of loadGridEnf")
-        return arr
+        return None, False, None
 
 
 if __name__ == '__main__':
     db_path = "/tmp/hum.sqlite"
 
+    g = GridDataAccessFactory.getInstance('GB', db_path)
+    g.getEnfSeries(1900, 11)
+    g.getEnfSeries(2023, 11)
+
     g = GridDataAccessFactory.getInstance('FI', db_path)
-    g.getEnfSeries(2017, 2)
+    g.getEnfSeries(2015, 1)     # ZIP compressed
+    g.getEnfSeries(2023, 11)    # 7z compressed

@@ -19,6 +19,7 @@ import datetime
 import os
 import json
 from griddata import GridDataAccessFactory
+from llvmlite.llvmpy import passes
 
 
 def butter_bandpass_filter(data, locut, hicut, fs, order):
@@ -263,7 +264,7 @@ class EnfModel():
         return max_index, corr[max_index], corr
 
 
-    def matchEuclid(self, ref):
+    def matchEuclidianDist(self, ref):
         """Given a reference model with ENF values find the best fit with the
         own ENF values.
 
@@ -393,7 +394,7 @@ class HumView(QMainWindow):
         self.correlationPlot.showGrid(x=True, y=True)
         self.correlationPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
         self.correlationCurve = self.correlationPlot.plot(name="Correlation",
-                                                   pen=pg.mkPen(color=(255, 255, 0)))
+                                                   pen=pg.mkPen(color=(255, 0, 255)))
         self.tabs.addTab(self.correlationPlot, "Correlation")
 
         main_layout.addWidget(self.tabs)
@@ -528,11 +529,13 @@ class HumView(QMainWindow):
 
 
     def __showEnfSources(self):
+        self.setCursor(Qt.WaitCursor)
         dlg = ShowEnfSourcesDlg(self)
         if dlg.exec():
             print("Success!")
         else:
             print("Cancel!")
+        self.unsetCursor()
 
 
     def __setButtonStatus(self):
@@ -585,7 +588,7 @@ class HumView(QMainWindow):
 
     def __showMatches(self, t, q, corr):
         # print("Show matches")
-        duration = self.controller.getDuration()
+        duration = self.model.getDuration()
 
         self.e_offset.setText(str(t))
         self.e_quality.setText(str(q))
@@ -648,26 +651,40 @@ class HumView(QMainWindow):
 
     def __onAnalyseClicked(self):
         """ Called when the 'analyse' button is pressed. """
+        # Display wait cursor
         self.setCursor(Qt.WaitCursor)
 
-        #harmonic = int(self.b_nominal_freq, self.b_band_size, self.b_harmonic.value())
-        #if self.enfAudioCurve:
-        #    self.enfAudioCurve.clear()
         self.model.makeEnf(int(self.b_nominal_freq.currentText()),
                            float(self.b_band_size.value()/1000),
                            int(self.b_harmonic.value()))
         self.__plotAudioRec(self.model)
+
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
         self.__setButtonStatus()
 
 
     def __onMatchClicked(self):
-        """Called when the 'match' button is clicked."""
+        """Called when the 'match' button is clicked.
+        
+        The method finds the best match of the ENF series of the clip
+        (self.model) and the ENF series of the chosen grid (self.gm).
+        Result of the matching process are the values: (1) The time
+        offset in seconds from the beginning of the grid ENF,
+        (2) a quality indication, and (3) an array of correlation values.
+        """
         self.setCursor(Qt.WaitCursor)
         now = datetime.datetime.now()
         print(f"{now} ... starting")
-        self.controller.__onMatchClicked(self.cb_algo.currentText())
+        algo = self.cb_algo.currentText()
+        assert algo in ('Pearson', 'Euclidian')
+        if algo == 'Pearson':
+            t, q, corr = self.model.matchPearson(self.gm)
+        elif algo == 'Euclidian':
+            t, q, corr = self.model.matchEuclidianDist(self.gm)
+        self.__showMatches(t, q, corr)
+        self.__plotAudioRec(self.model, t_offset=t)
+        # self.controller.__onMatchClicked(self.cb_algo.currentText())
         self.tabs.setCurrentIndex(1)
         self.unsetCursor()
         now = datetime.datetime.now()
@@ -679,6 +696,7 @@ class ShowEnfSourcesDlg(QDialog):
 
     def __init__(self, parent):
         super().__init__(parent)
+
         columns = ("Grid/country", "From", "To")
         locations = [r for r in GridDataAccessFactory.enumLocations()]
 

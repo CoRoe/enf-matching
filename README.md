@@ -48,7 +48,21 @@ In oder to run the test case:
   The diagram shows a good match between the ENF pattern in the audio clip and
   the (test) grid ENF.
 
+# Testing
+
+There a some unit test cases for `griddata.py`. To run them:
+
+```
+pytest-3 test.py
+```
+
 # Status
+
+Getting actual ENF values from grid operator is implemented for Great Britain
+and Finland.
+
+Once downloaded from the internet, the extracted ENF series are stored in an
+sqlite database; its filename can be changed in the *settings* dialog.
 
 The application reproduces the test case outlined in
 [github](https://github.com/robert/enf-matching). The original reference
