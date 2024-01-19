@@ -14,8 +14,6 @@ import numpy as np
 from scipy import signal
 import struct as st
 from _datetime import date
-from twisted.spread.pb import respond
-from samba.dcerpc.dcerpc import response
 
 
 #
@@ -60,13 +58,23 @@ class GridDataAccess():
     def getEnfSeries(self, year, month):
         """Get a series of ENF values for a given year and month.
         """
+
         assert(type(year) == int and type(month) == int and month >= 1 and month <= 12)
+        # input datetime
+        dt = datetime.datetime(year, month, 1, 0, 0)
+        # epoch time
+        epoch_time = datetime.datetime(1970, 1, 1)
+
+        # subtract Datetime from epoch datetime
+        delta = (dt - epoch_time)
+        timestamp = int(delta.total_seconds())
+        print("Second from epoch:", timestamp)
 
         # Check if ENF data are already in the database
         data = self.__query_db(year, month)
         if data is not None:
             # Is in database
-            return data
+            return data, timestamp
         else:
             # Get the URL of the actual data file; the call is delegated to the derived,
             # grid-specific class
@@ -86,7 +94,7 @@ class GridDataAccess():
                         print(f"Unknown file type {suffix}")
                     if data is not None:
                         self.__save_to_db(data, year, month)
-            return data
+            return data, timestamp
 
 
     def __downloadFile(self, url):

@@ -19,7 +19,6 @@ import datetime
 import os
 import json
 from griddata import GridDataAccessFactory
-from llvmlite.llvmpy import passes
 
 
 def butter_bandpass_filter(data, locut, hicut, fs, order):
@@ -133,6 +132,7 @@ class EnfModel():
         self.enf = None
         self.databasePath = databasePath
         self.fft_freq = None
+        self.timestamp = None
 
 
     def setDatabasePath(self, path):
@@ -185,23 +185,26 @@ class EnfModel():
         :param: nominal_freq: Nominal grid frequency in Hz; usually 50 or 60 Hz
         :param: freq_band_size: Size of the frequency band around *nominal_freq* in Hz
         :param: harmonic:
+
+        The method takes self.data (the samples of the audio recording) and computes
+        self.enf (the series of frequencies of the 50 or 60 Hz hum of the recording.)
         """
         assert(self.data is not None)
 
         self.nominal_freq = nominal_freq
         self.freq_band_size = freq_band_size
         self.harmonic = harmonic
-        self.enf_output = enf_series(self.data, self.fs, nominal_freq,
-                                     freq_band_size, harmonic_n=harmonic)
+        enf_output = enf_series(self.data, self.fs, nominal_freq,
+                                freq_band_size, harmonic_n=harmonic)
 
-        # stft is the Short-Term Fourier Transfrom of the autio file, computed
+        # stft is the Short-Term Fourier Transfrom of the audio file, computed
         # per second.
-        self.stft = self.enf_output['stft']
+        # self.stft = enf_output['stft']
 
         # ENF are the ENF values
-        enf = [int(e * 1000) for e in self.enf_output['enf']]
+        enf = [int(e * 1000) for e in enf_output['enf']]
         self.enf = np.array(enf)
-        # print(self.enf[0:5])
+        assert type(self.enf) == np.ndarray
 
 
     def loadGridEnf(self, location, year: int, month: int):
@@ -216,7 +219,9 @@ class EnfModel():
         assert(type(month) == int and month >= 1 and month <= 12)
         assert location != 'Test', "Handled elsewhere"
         data_source = GridDataAccessFactory.getInstance(location, self.databasePath)
-        self.enf = data_source.getEnfSeries(year, month)
+        self.enf, self.timestamp = data_source.getEnfSeries(year, month)
+        assert self.enf is None or type(self.enf) == np.ndarray
+        assert type(self.timestamp == int)
 
 
     def makeFFT(self):
@@ -246,6 +251,8 @@ class EnfModel():
         correlation at that index, an array of correlations for all possible
         indices.
 
+        No -- the timestamp of the best match.
+
         The method computes the Pearson correlation between the ENF values in
         the clip and the grid.
 
@@ -256,12 +263,14 @@ class EnfModel():
 
         print(f"Start Pearson correlation computation: {datetime.datetime.now()} ...")
         ref_enf = ref.getENF()
+        timestamp = ref.getTimestamp()
+        print(f"Len ref_enf: {len(ref_enf)}, len(enf): {len(self.enf)}")
         n_steps = len(ref_enf) - len(self.enf) + 1
         corr = [np.corrcoef(ref_enf[step:step+len(self.enf)], self.enf)[0][1]
                 for step in range(n_steps)]
         max_index = np.argmax(corr)
         print(f"End Pearson correlation computation {datetime.datetime.now()} ...")
-        return max_index, corr[max_index], corr
+        return timestamp + max_index, corr[max_index], corr
 
 
     def matchEuclidianDist(self, ref):
@@ -282,13 +291,14 @@ class EnfModel():
 
         print(f"Start Euclidian correlation computation: {datetime.datetime.now()} ...")
         ref_enf = ref.getENF()
+        timestamp = ref.getTimestamp()
         n_steps = len(ref_enf) - len(self.enf) + 1
         corr = [spatial.distance.cdist([ref_enf[step:step+len(self.enf)], self.enf],
                                        [ref_enf[step:step+len(self.enf)], self.enf],
                                        'sqeuclidean')[0][1] for step in range(n_steps)]
         min_index = np.argmin(corr)
         print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
-        return min_index, corr[min_index], corr
+        return timestamp + min_index, corr[min_index], corr
 
 
     def getENF(self):
@@ -314,6 +324,22 @@ class EnfModel():
         return self.fs
 
 
+    def getTimestamp(self):
+        return self.timestamp
+
+
+class TimeAxisItem(pg.AxisItem):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+
+    def tickStrings(self, values, scale, spacing):
+        print()
+        # return [QTime().addMSecs(value).toString('mm:ss') for value in values]
+        return [datetime.fromtimestamp(value) for value in values]
+
+
+
 class HumView(QMainWindow):
     """ Display ENF analysis and result."""
 
@@ -327,7 +353,7 @@ class HumView(QMainWindow):
 
         self.enfAudioCurve = None     # ENF series of loaded audio file
         self.clipSpectrumCurve = None # Fourier transform of loaded audio file
-        self.endGridCurve = None      # ENF series of grid
+        self.enfGridCurve = None      # ENF series of grid
         self.correlationCurve = None  # Correlation of ENF series of audio
                                       # clip and grid
 
@@ -372,16 +398,16 @@ class HumView(QMainWindow):
         # Widget showing the ENF values of a grid and an audio recording
         #
         # See https://pyqtgraph.readthedocs.io/en/latest/getting_started/plotting.html
-        self.enfPlot = pg.PlotWidget()
+        self.enfPlot = pg.PlotWidget(axisItems={'bottom': pg.DateAxisItem()})
         self.enfPlot.setLabel("left", "Frequency (Hz)")
-        self.enfPlot.setLabel("bottom", "Time (sec)")
+        self.enfPlot.setLabel("bottom", "Date and time")
         self.enfPlot.addLegend()
         self.enfPlot.setBackground("w")
         self.enfPlot.showGrid(x=True, y=True)
         self.enfPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
         self.enfAudioCurve = self.enfPlot.plot(name="ENF values of WAV file",
                                                pen=pg.mkPen(color=(255, 0, 0)))
-        self.endGridCurve = self.enfPlot.plot(name="Grid frequency history",
+        self.enfGridCurve = self.enfPlot.plot(name="Grid frequency history",
                                                pen=pg.mkPen(color=(0, 255, 0)))
         self.tabs.addTab(self.enfPlot, "ENF Series")
 
@@ -554,12 +580,9 @@ class HumView(QMainWindow):
 
         data = audioRecording.getENF()
 
-        # Versuch -------------------------------------------
-        # Define legend and curve only once
-        fft_t, fft_a = audioRecording.makeFFT()
+        # fft_t, fft_a = audioRecording.makeFFT()
+        fft_t, fft_a = audioRecording.getFFT()
         self.clipSpectrumCurve.setData(fft_t, fft_a)
-        # ---------------------------------------------------
-
         self.enfAudioCurve.setData(list(range(t_offset, len(data) + t_offset)),
                                 data)
 
@@ -577,8 +600,13 @@ class HumView(QMainWindow):
 
         data = gridHistory.getENF()
         assert(data is not None and type(data) == np.ndarray)
+        timestamp = gridHistory.getTimestamp()
+        assert timestamp is not None or type(timestamp) == int
 
-        self.endGridCurve.setData(list(range(len(data))), data)
+        print("Second from epoch:", timestamp)
+
+        timestamps = range(timestamp, timestamp + len(data))
+        self.enfGridCurve.setData(timestamps, data)
 
 
     def __plotCorrelation(self, t, corr):
@@ -587,13 +615,21 @@ class HumView(QMainWindow):
 
 
     def __showMatches(self, t, q, corr):
+        """Display the result of matching the clips ENF versus the grid ENF.
+
+        :param t: The timestamp of the match in seconds since the epoch.
+        :param q: Descibes the quelity of the match. Interpretation depends
+        on the matching algorithm.
+        :param corr:
+        """
         # print("Show matches")
         duration = self.model.getDuration()
 
         self.e_offset.setText(str(t))
         self.e_quality.setText(str(q))
         self.enfPlot.setXRange(t, t + duration, padding=1)
-
+        ts = datetime.datetime.fromtimestamp(t).strftime('%Y-%m-%d %H:%M:%S')
+        self.e_date.setText(ts)
         self.__plotCorrelation(t, corr)
 
 
@@ -618,7 +654,7 @@ class HumView(QMainWindow):
             self.enfAudioCurve.setData([], [])
             self.correlationCurve.setData([], [])
             self.clipSpectrumCurve.setData([], [])
-            self.endGridCurve.setData([], [])
+            self.enfGridCurve.setData([], [])
 
         self.unsetCursor()
         self.__setButtonStatus()
@@ -644,6 +680,8 @@ class HumView(QMainWindow):
             self.gm.loadGridEnf(location, year, month)
         if self.gm.enf is not None:
             self.__plotGridHistory(self.gm)
+        if self.model is not None:
+            self.__plotAudioRec(self.model, self.gm.getTimestamp())
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
         self.__setButtonStatus()
@@ -657,6 +695,7 @@ class HumView(QMainWindow):
         self.model.makeEnf(int(self.b_nominal_freq.currentText()),
                            float(self.b_band_size.value()/1000),
                            int(self.b_harmonic.value()))
+        self.model.makeFFT()
         self.__plotAudioRec(self.model)
 
         self.unsetCursor()
@@ -666,7 +705,7 @@ class HumView(QMainWindow):
 
     def __onMatchClicked(self):
         """Called when the 'match' button is clicked.
-        
+
         The method finds the best match of the ENF series of the clip
         (self.model) and the ENF series of the chosen grid (self.gm).
         Result of the matching process are the values: (1) The time
