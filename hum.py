@@ -8,8 +8,8 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QVBoxLayout, QLineEdit, QFileDialog, QLabel,
                              QPushButton, QGroupBox, QGridLayout,
                              QComboBox, QSpinBox, QTabWidget,
-                             QMenuBar, QAction, QDialog,
-                             QDialogButtonBox)
+                             QMenuBar, QAction, QDialog, QMessageBox,
+                             QDialogButtonBox, QProgressDialog)
 from PyQt5.Qt import Qt
 
 from scipy import signal, fft, spatial
@@ -19,6 +19,8 @@ import datetime
 import os
 import json
 from griddata import GridDataAccessFactory
+from debugpy._vendored.pydevd.stubs._django_manager_body import none
+from scipy.integrate._ivp.dop853_coefficients import N_STAGES
 
 
 def butter_bandpass_filter(data, locut, hicut, fs, order):
@@ -132,7 +134,9 @@ class EnfModel():
         self.enf = None
         self.databasePath = databasePath
         self.fft_freq = None
+        self.fft_ampl = None
         self.timestamp = None
+        self.aborted = False
 
 
     def setDatabasePath(self, path):
@@ -242,11 +246,20 @@ class EnfModel():
         return self.fft_freq, self.fft_ampl
 
 
-    def matchPearson(self, ref):
+    def getMatchingSteps(self, gridModel):
+        """Return the number of number of iterations. Usefull for a progress
+        indicator."""
+        n_steps = len(gridModel.getENF()) - len(self.enf) + 1
+        return n_steps
+
+
+    def matchPearson(self, ref, progressCallback):
         """Given a reference model with ENF values find the best fit with the
         own ENF values.
 
         :param ref: The ENF series of the grid
+        :param progressCallback: Function to be called once in a while
+        to signal the progress of the processing.
         :returns: The index into the reference series of thebets match; the
         correlation at that index, an array of correlations for all possible
         indices.
@@ -261,23 +274,44 @@ class EnfModel():
         """
         assert(type(ref) == EnfModel)
 
+        self.aborted = False
+
+        def step_enum(steps, progressCallback):
+            for n in range(steps):
+                if n % 1000 == 0:
+                    progressCallback(n)
+                yield n
+
+        def canceled():
+            if self.aborted:
+                raise StopIteration
+
         print(f"Start Pearson correlation computation: {datetime.datetime.now()} ...")
         ref_enf = ref.getENF()
         timestamp = ref.getTimestamp()
         print(f"Len ref_enf: {len(ref_enf)}, len(enf): {len(self.enf)}")
         n_steps = len(ref_enf) - len(self.enf) + 1
-        corr = [np.corrcoef(ref_enf[step:step+len(self.enf)], self.enf)[0][1]
-                for step in range(n_steps)]
-        max_index = np.argmax(corr)
-        print(f"End Pearson correlation computation {datetime.datetime.now()} ...")
-        return timestamp + max_index, corr[max_index], corr
+        try:
+            corr = [np.corrcoef(ref_enf[step:step+len(self.enf)], self.enf)[0][1]
+                    for step in step_enum(n_steps, progressCallback)
+                    if not canceled()]
+        except StopIteration:
+            print("Cancelled...")
+        if self.aborted:
+            return None, None, None
+        else:
+            max_index = np.argmax(corr)
+            print(f"End Pearson correlation computation {datetime.datetime.now()} ...")
+            return timestamp + max_index, corr[max_index], corr
 
 
-    def matchEuclidianDist(self, ref):
+    def matchEuclidianDist(self, ref, progressCallback):
         """Given a reference model with ENF values find the best fit with the
         own ENF values.
 
         :param ref: The ENF series of the grid
+        :param progressCallback: Function to be called once in a while
+        to signal the progress of the processing.
         :returns: The index into the reference series of thebets match; the
         correlation at that index, an array of correlations for all possible
         indices.
@@ -286,19 +320,46 @@ class EnfModel():
         the clip and the grid.
 
         See: https://www.geeksforgeeks.org/python-distance-between-collections-of-inputs/
+
+        The methond constantly monitors self.aborted and stops if its value is True.
         """
+
+        # Apparently the StopIteration exception can only be raised from within
+        # the condition function. Unfortunate, because two functions are needed
+        # in the list comprehension.
+        self.aborted = False
+
+        def step_enum(steps, progressCallback):
+            for n in range(steps):
+                if n % 1000 == 0:
+                    progressCallback(n)
+                yield n
+
+        def canceled():
+            if self.aborted:
+                raise StopIteration
+
         assert(type(ref) == EnfModel)
 
         print(f"Start Euclidian correlation computation: {datetime.datetime.now()} ...")
         ref_enf = ref.getENF()
         timestamp = ref.getTimestamp()
         n_steps = len(ref_enf) - len(self.enf) + 1
-        corr = [spatial.distance.cdist([ref_enf[step:step+len(self.enf)], self.enf],
-                                       [ref_enf[step:step+len(self.enf)], self.enf],
-                                       'sqeuclidean')[0][1] for step in range(n_steps)]
-        min_index = np.argmin(corr)
-        print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
-        return timestamp + min_index, corr[min_index], corr
+        progressCallback(0)
+        try:
+            corr = [spatial.distance.cdist([ref_enf[step:step+len(self.enf)], self.enf],
+                                           [ref_enf[step:step+len(self.enf)], self.enf],
+                                           'sqeuclidean')[0][1] for step in step_enum(n_steps, progressCallback)
+                                            if not canceled()]
+        except StopIteration:
+            print("...canceled")
+        if self.aborted:
+            return None, None, None
+        else:
+            min_index = np.argmin(corr)
+            print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
+            progressCallback(n_steps)
+            return timestamp + min_index, corr[min_index], corr
 
 
     def getENF(self):
@@ -315,7 +376,6 @@ class EnfModel():
 
     def getDuration(self):
         """ Length of the clip in seconds."""
-        #assert(self.enf is not None)
         return self.clip_len_s
 
 
@@ -328,16 +388,13 @@ class EnfModel():
         return self.timestamp
 
 
-class TimeAxisItem(pg.AxisItem):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def onCanceled(self):
+        """Handles the 'cancel' signal from a QProgressDialog.
 
-
-    def tickStrings(self, values, scale, spacing):
-        print()
-        # return [QTime().addMSecs(value).toString('mm:ss') for value in values]
-        return [datetime.fromtimestamp(value) for value in values]
-
+        Sets the instance variable aborted. Lengthy operations check this
+        flag and stop when it is set.
+        """
+        self.aborted = True
 
 
 class HumView(QMainWindow):
@@ -497,7 +554,7 @@ class HumView(QMainWindow):
         self.b_match.clicked.connect(self.__onMatchClicked)
         result_area.addWidget(self.b_match, 0, 0)
         self.cb_algo = QComboBox()
-        self.cb_algo.addItems(('Pearson', 'Euclidian'))
+        self.cb_algo.addItems(('Euclidian', 'Pearson'))
         result_area.addWidget(self.cb_algo, 0, 1)
         result_area.addWidget(QLabel("Offset (sec)"), 1, 0)
         self.e_offset = QLineEdit()
@@ -576,15 +633,19 @@ class HumView(QMainWindow):
 
     def __plotAudioRec(self, audioRecording, t_offset=0):
         """ Plot the ENF values of an audio recording."""
+        # FIXME: Sinnlos, wenn der Clip noch nicht analysiert ist.
         assert(type(audioRecording) == EnfModel)
 
-        data = audioRecording.getENF()
-
-        # fft_t, fft_a = audioRecording.makeFFT()
+        # Plot FFT of the clip (if already computed)
         fft_t, fft_a = audioRecording.getFFT()
-        self.clipSpectrumCurve.setData(fft_t, fft_a)
-        self.enfAudioCurve.setData(list(range(t_offset, len(data) + t_offset)),
-                                data)
+        if fft_t is not None and fft_a is not None:
+            self.clipSpectrumCurve.setData(fft_t, fft_a)
+
+        # Plot ENF of clip (if already computed)
+        data = audioRecording.getENF()
+        if data is not None:
+            self.enfAudioCurve.setData(list(range(t_offset, len(data) + t_offset)),
+                                       data)
 
         #self.e_duration.setText(str(audioRecording.duration()))
         self.e_sampleRate.setText(str(audioRecording.sampleRate()))
@@ -620,7 +681,8 @@ class HumView(QMainWindow):
         :param t: The timestamp of the match in seconds since the epoch.
         :param q: Descibes the quelity of the match. Interpretation depends
         on the matching algorithm.
-        :param corr:
+        :param corr:            print()
+
         """
         # print("Show matches")
         duration = self.model.getDuration()
@@ -680,6 +742,12 @@ class HumView(QMainWindow):
             self.gm.loadGridEnf(location, year, month)
         if self.gm.enf is not None:
             self.__plotGridHistory(self.gm)
+        else:
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Information")
+            dlg.setIcon(QMessageBox.Information)
+            dlg.setText(f"Could not get {location} ENF data for {year}-{month:02}")
+            dlg.exec()
         if self.model is not None:
             self.__plotAudioRec(self.model, self.gm.getTimestamp())
         self.unsetCursor()
@@ -712,23 +780,39 @@ class HumView(QMainWindow):
         offset in seconds from the beginning of the grid ENF,
         (2) a quality indication, and (3) an array of correlation values.
         """
-        self.setCursor(Qt.WaitCursor)
+        # self.setCursor(Qt.WaitCursor)
+
         now = datetime.datetime.now()
         print(f"{now} ... starting")
         algo = self.cb_algo.currentText()
         assert algo in ('Pearson', 'Euclidian')
+
+        ## Progress dialog
+        matchingSteps = self.model.getMatchingSteps(self.gm)
+        self.progressDialog = QProgressDialog("Trying to locate audio recording, computing best fit ...", "Abort",
+                                              0, matchingSteps, self)
+        self.progressDialog.setWindowTitle("Matching clip")
+        self.progressDialog.setWindowModality(Qt.WindowModal)
+        self.progressDialog.canceled.connect(self.model.onCanceled)
+
         if algo == 'Pearson':
-            t, q, corr = self.model.matchPearson(self.gm)
+            t, q, corr = self.model.matchPearson(self.gm, self.matchingProgress)
         elif algo == 'Euclidian':
-            t, q, corr = self.model.matchEuclidianDist(self.gm)
-        self.__showMatches(t, q, corr)
-        self.__plotAudioRec(self.model, t_offset=t)
-        # self.controller.__onMatchClicked(self.cb_algo.currentText())
-        self.tabs.setCurrentIndex(1)
-        self.unsetCursor()
-        now = datetime.datetime.now()
-        print(f"{now} ... done")
+            t, q, corr = self.model.matchEuclidianDist(self.gm, self.matchingProgress)
+        if corr is not None:
+            self.__showMatches(t, q, corr)
+            self.__plotAudioRec(self.model, t_offset=t)
+            # self.controller.__onMatchClicked(self.cb_algo.currentText())
+            self.tabs.setCurrentIndex(1)
+            # self.unsetCursor()
+            now = datetime.datetime.now()
+            print(f"{now} ... done")
         self.__setButtonStatus()
+
+
+    def matchingProgress(self, value):
+        """Called by matchXxxx method to indicate the matching progress."""
+        self.progressDialog.setValue(value)
 
 
 class ShowEnfSourcesDlg(QDialog):
