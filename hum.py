@@ -7,10 +7,10 @@ import pyqtgraph as pg
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QVBoxLayout, QLineEdit, QFileDialog, QLabel,
                              QPushButton, QGroupBox, QGridLayout,
-                             QComboBox, QSpinBox, QTabWidget,
+                             QComboBox, QSpinBox, QTabWidget, QDoubleSpinBox,
                              QMenuBar, QAction, QDialog, QMessageBox,
                              QDialogButtonBox, QProgressDialog)
-from PyQt5.Qt import Qt
+from PyQt5.Qt import Qt, QCheckBox
 
 from scipy import signal, fft, spatial
 import wave
@@ -19,8 +19,6 @@ import datetime
 import os
 import json
 from griddata import GridDataAccessFactory
-from debugpy._vendored.pydevd.stubs._django_manager_body import none
-from scipy.integrate._ivp.dop853_coefficients import N_STAGES
 
 
 def butter_bandpass_filter(data, locut, hicut, fs, order):
@@ -132,6 +130,7 @@ class EnfModel():
         """
         self.data = None
         self.enf = None
+        self.enfs = None
         self.databasePath = databasePath
         self.fft_freq = None
         self.fft_ampl = None
@@ -362,8 +361,37 @@ class EnfModel():
             return timestamp + min_index, corr[min_index], corr
 
 
+    def outlierSmoother(self, threshold, win):
+        """Find outliers in the ENF values replace them with the median of
+        neighbouring values.
+
+        :param threshold: Values with threshold times the median deviation are
+        smoothed
+
+        :param win:
+        :param self.enf: ENF data generated previous step
+        :param self.enfs: Smoothed ENF data
+        """
+        x_corr = np.copy(self.enf)
+        d = np.abs(self.enf - np.median(self.enf))
+        mdev = np.median(d)
+        print(f"Deviation median: {mdev}")
+        idxs_outliers = np.nonzero(d > threshold*mdev)[0]
+        for i in idxs_outliers:
+            if i-win < 0:
+                x_corr[i] = np.median(np.append(self.enf[0:i], self.enf[i+1:i+win+1]))
+            elif i+win+1 > len(self.enf):
+                x_corr[i] = np.median(np.append(self.enf[i-win:i], self.enf[i+1:len(self.enf)]))
+            else:
+                x_corr[i] = np.median(np.append(self.enf[i-win:i], self.enf[i+1:i+win+1]))
+        self.enfs = x_corr
+
     def getENF(self):
         return self.enf
+
+
+    def getENFs(self):
+        return self.enfs
 
 
     def getData(self):
@@ -409,6 +437,7 @@ class HumView(QMainWindow):
         self.databasePath = self.settings.databasePath()
 
         self.enfAudioCurve = None     # ENF series of loaded audio file
+        self.enfAudioCurveSmothed = None
         self.clipSpectrumCurve = None # Fourier transform of loaded audio file
         self.enfGridCurve = None      # ENF series of grid
         self.correlationCurve = None  # Correlation of ENF series of audio
@@ -440,6 +469,8 @@ class HumView(QMainWindow):
 
         self.tabs = QTabWidget()
 
+        # Create a plot widget for the audio clip spectrum and add it to the
+        # tab
         self.clipSpectrumPlot = pg.PlotWidget()
         self.clipSpectrumPlot.setLabel("left", "Amplitude")
         self.clipSpectrumPlot.setLabel("bottom", "Frequency (Hz)")
@@ -452,9 +483,8 @@ class HumView(QMainWindow):
                                            pen=pg.mkPen(color=(255, 0, 0)))
         self.tabs.addTab(self.clipSpectrumPlot, "Clip Spectrum")
 
-        # Widget showing the ENF values of a grid and an audio recording
-        #
-        # See https://pyqtgraph.readthedocs.io/en/latest/getting_started/plotting.html
+        # Create a plot widget for the various ENF curves and add it to the
+        # tab
         self.enfPlot = pg.PlotWidget(axisItems={'bottom': pg.DateAxisItem()})
         self.enfPlot.setLabel("left", "Frequency (Hz)")
         self.enfPlot.setLabel("bottom", "Date and time")
@@ -463,15 +493,17 @@ class HumView(QMainWindow):
         self.enfPlot.showGrid(x=True, y=True)
         self.enfPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
         self.enfAudioCurve = self.enfPlot.plot(name="ENF values of WAV file",
-                                               pen=pg.mkPen(color=(255, 0, 0)))
+                                               pen=pg.mkPen(color=(255, 128, 0)))
+        self.enfAudioCurveSmothed = self.enfPlot.plot(name="Smoothed ENF values of WAV file",
+                                               pen=pg.mkPen(color=(204, 0, 0)))
         self.enfGridCurve = self.enfPlot.plot(name="Grid frequency history",
-                                               pen=pg.mkPen(color=(0, 255, 0)))
+                                               pen=pg.mkPen(color=(0, 102, 102)))
         self.tabs.addTab(self.enfPlot, "ENF Series")
 
         # Plots the correlation versus time offset
-        self.correlationPlot = pg.PlotWidget()
+        self.correlationPlot = pg.PlotWidget(axisItems={'bottom': pg.DateAxisItem()})
         self.correlationPlot.setLabel("left", "correlation")
-        self.correlationPlot.setLabel("bottom", "time lag [sec]")
+        self.correlationPlot.setLabel("bottom", "Date / time")
         self.correlationPlot.addLegend()
         self.correlationPlot.setBackground("w")
         self.correlationPlot.showGrid(x=True, y=True)
@@ -482,11 +514,13 @@ class HumView(QMainWindow):
 
         main_layout.addWidget(self.tabs)
 
+        # Overall layout
         main_layout.addWidget(audio_group)
         main_layout.addWidget(analyse_group)
         main_layout.addWidget(grid_group)
         main_layout.addWidget(result_group)
 
+        # 'audio' area
         self.b_load = QPushButton("Load")
         self.b_load.setToolTip("Load a WAV file to analyse.")
         self.b_load.clicked.connect(self._onOpenWavFileClicked)
@@ -505,6 +539,45 @@ class HumView(QMainWindow):
         audio_area.addWidget(self.e_duration, 1, 3)
         audio_area.setColumnStretch(5, 1)
 
+        # 'Analyse' area; contains settings to get the ENF values from the
+        # recorded audio clip
+        analyse_area.addWidget(QLabel("Nominal grid freq"), 0, 1)
+        self.b_nominal_freq = QComboBox()
+        self.b_nominal_freq.addItems(("50", "60"))
+        self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
+                                       " 50 Hz in most countries.")
+        analyse_area.addWidget(self.b_nominal_freq, 0, 2)
+        analyse_area.addWidget(QLabel("Band width"), 0, 3)
+        self.b_band_size = QSpinBox()
+        self.b_band_size.setRange(0, 500)
+        self.b_band_size.setValue(200)
+        self.b_band_size.setMinimumWidth(100)
+        self.b_band_size.setSuffix(" mHz")
+        analyse_area.addWidget(self.b_band_size, 0, 4)
+        analyse_area.addWidget(QLabel("Harmonic"), 0, 5)
+        self.b_harmonic = QSpinBox()
+        self.b_harmonic.setRange(1, 10)
+        self.b_harmonic.setValue(2)
+        analyse_area.addWidget(self.b_harmonic, 0, 6)
+        self.c_rem_outliers = QCheckBox("Remove outliers")
+        analyse_area.addWidget(self.c_rem_outliers, 1, 0)
+        analyse_area.addWidget(QLabel("Threshold"), 1, 1)
+        self.sp_Outlier_Threshold = QDoubleSpinBox(self)
+        self.sp_Outlier_Threshold.setValue(3)
+        self.sp_Outlier_Threshold.setToolTip("Factor defining which ENF values shall be considered invalid outliers")
+        analyse_area.addWidget(self.sp_Outlier_Threshold,1, 2)
+        analyse_area.addWidget(QLabel("Window"), 1, 3)
+        self.sp_window = QSpinBox()
+        self.sp_window.setValue(5)
+        analyse_area.addWidget(self.sp_window,1, 4)
+
+        analyse_area.setColumnStretch(6, 1)
+
+        self.b_analyse = QPushButton("Analyse")
+        self.b_analyse.clicked.connect(self.__onAnalyseClicked)
+        analyse_area.addWidget(self.b_analyse, 2, 0)
+
+        # 'Grid' area; settings to download the ENF values from the internet
         grid_area.addWidget(QLabel("Location"), 0, 0)
         self.l_country = QComboBox(self)
         for l in GridDataAccessFactory.enumLocations():
@@ -513,7 +586,7 @@ class HumView(QMainWindow):
         grid_area.addWidget(self.l_country, 0, 1)
         grid_area.addWidget(QLabel("Year"), 0, 2)
         self.l_year = QComboBox(self)
-        for y in range(2000, 2023 + 1):
+        for y in range(2024, 2000 - 1, -1):
             self.l_year.addItem(f'{y}')
         grid_area.addWidget(self.l_year, 0, 3)
         grid_area.addWidget(QLabel("Month"), 0, 4)
@@ -526,29 +599,6 @@ class HumView(QMainWindow):
         self.b_loadGridHistory.clicked.connect(self.__onLoadGridHistoryClicked)
         grid_area.setColumnStretch(6, 1)
 
-        analyse_area.addWidget(QLabel("Nominal grid freq"), 0, 0)
-        self.b_nominal_freq = QComboBox()
-        self.b_nominal_freq.addItems(("50", "60"))
-        self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
-                                       " 50 Hz in most countries.")
-        analyse_area.addWidget(self.b_nominal_freq, 0, 1)
-        analyse_area.addWidget(QLabel("Band width"), 0, 2)
-        self.b_band_size = QSpinBox()
-        self.b_band_size.setRange(0, 500)
-        self.b_band_size.setValue(200)
-        self.b_band_size.setMinimumWidth(100)
-        self.b_band_size.setSuffix(" mHz")
-        analyse_area.addWidget(self.b_band_size, 0, 3)
-        analyse_area.addWidget(QLabel("Harmonic"), 0, 4)
-        self.b_harmonic = QSpinBox()
-        self.b_harmonic.setRange(1, 10)
-        self.b_harmonic.setValue(2)
-        analyse_area.addWidget(self.b_harmonic, 0, 5)
-        analyse_area.setColumnStretch(6, 1)
-
-        self.b_analyse = QPushButton("Analyse")
-        self.b_analyse.clicked.connect(self.__onAnalyseClicked)
-        analyse_area.addWidget(self.b_analyse, 1, 0)
 
         self.b_match = QPushButton("Match")
         self.b_match.clicked.connect(self.__onMatchClicked)
@@ -646,6 +696,10 @@ class HumView(QMainWindow):
         if data is not None:
             self.enfAudioCurve.setData(list(range(t_offset, len(data) + t_offset)),
                                        data)
+        smoothedData = audioRecording.getENFs()
+        if smoothedData is not None:
+            self.enfAudioCurveSmothed.setData(list(range(t_offset, len(smoothedData) + t_offset)),
+                                       smoothedData)
 
         #self.e_duration.setText(str(audioRecording.duration()))
         self.e_sampleRate.setText(str(audioRecording.sampleRate()))
@@ -763,6 +817,10 @@ class HumView(QMainWindow):
         self.model.makeEnf(int(self.b_nominal_freq.currentText()),
                            float(self.b_band_size.value()/1000),
                            int(self.b_harmonic.value()))
+        if self.c_rem_outliers.isChecked():
+            m = self.sp_Outlier_Threshold.value()
+            window = self.sp_window.value()
+            self.model.outlierSmoother(m, window)
         self.model.makeFFT()
         self.__plotAudioRec(self.model)
 
