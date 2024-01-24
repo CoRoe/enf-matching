@@ -6,11 +6,11 @@
 import pyqtgraph as pg
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QVBoxLayout, QLineEdit, QFileDialog, QLabel,
-                             QPushButton, QGroupBox, QGridLayout,
+                             QPushButton, QGroupBox, QGridLayout, QCheckBox,
                              QComboBox, QSpinBox, QTabWidget, QDoubleSpinBox,
                              QMenuBar, QAction, QDialog, QMessageBox,
                              QDialogButtonBox, QProgressDialog)
-from PyQt5.Qt import Qt, QCheckBox
+from PyQt5.Qt import Qt
 
 from scipy import signal, fft, spatial
 import wave
@@ -289,9 +289,16 @@ class EnfModel():
         ref_enf = ref.getENF()
         timestamp = ref.getTimestamp()
         print(f"Len ref_enf: {len(ref_enf)}, len(enf): {len(self.enf)}")
-        n_steps = len(ref_enf) - len(self.enf) + 1
+
+        # If a smoothed version is available then use it
+        if self.enfs is not None:
+            enf = self.enfs
+        else:
+            enf = self.enf
+
+        n_steps = len(ref_enf) - len(enf) + 1
         try:
-            corr = [np.corrcoef(ref_enf[step:step+len(self.enf)], self.enf)[0][1]
+            corr = [np.corrcoef(ref_enf[step:step+len(enf)], enf)[0][1]
                     for step in step_enum(n_steps, progressCallback)
                     if not canceled()]
         except StopIteration:
@@ -343,11 +350,18 @@ class EnfModel():
         print(f"Start Euclidian correlation computation: {datetime.datetime.now()} ...")
         ref_enf = ref.getENF()
         timestamp = ref.getTimestamp()
-        n_steps = len(ref_enf) - len(self.enf) + 1
+
+        # If a smoothed version is available then use it
+        if self.enfs is not None:
+            enf = self.enfs
+        else:
+            enf = self.enf
+
+        n_steps = len(ref_enf) - len(enf) + 1
         progressCallback(0)
         try:
-            corr = [spatial.distance.cdist([ref_enf[step:step+len(self.enf)], self.enf],
-                                           [ref_enf[step:step+len(self.enf)], self.enf],
+            corr = [spatial.distance.cdist([ref_enf[step:step+len(enf)], enf],
+                                           [ref_enf[step:step+len(enf)], enf],
                                            'sqeuclidean')[0][1] for step in step_enum(n_steps, progressCallback)
                                             if not canceled()]
         except StopIteration:
