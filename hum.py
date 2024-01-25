@@ -19,6 +19,7 @@ import datetime
 import os
 import json
 from griddata import GridDataAccessFactory
+import pandas as pd
 
 
 def butter_bandpass_filter(data, locut, hicut, fs, order):
@@ -180,6 +181,8 @@ class EnfModel():
             assert(type(self.data) == np.ndarray)
             self.clip_len_s = int(self.n_frames / self.fs)
             print(f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds")
+            # Use current time as timestamp
+            self.timestamp = int(datetime.datetime.now().timestamp())
 
 
     def makeEnf(self, nominal_freq, freq_band_size, harmonic):
@@ -369,10 +372,36 @@ class EnfModel():
         if self.aborted:
             return None, None, None
         else:
+            # Normalise
+            corr = corr / np.sqrt(len(corr))
             min_index = np.argmin(corr)
             print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
             progressCallback(n_steps)
             return timestamp + min_index, corr[min_index], corr
+
+
+    def matchConv(self, ref, progressCallback):
+        """Compute correlation between clip ENF and grid ENF."""
+        print("matchConv")
+        grid_freqs = ref.getENF()
+        if self.enfs is not None:
+            enf = self.enfs
+        else:
+            enf = self.enf
+        n_steps = len(grid_freqs) - len(enf) + 1
+        timestamp = ref.getTimestamp()
+
+        progressCallback(0)
+        xcorr = signal.correlate(
+            grid_freqs-np.mean(grid_freqs),
+            enf-np.mean(enf),
+            mode='same')
+        max_index = np.argmax(xcorr)
+        ref_normalization = pd.Series(grid_freqs).rolling(self.clip_len_s, center=True).std()
+        signal_normalization = np.std(enf)
+        xcorr_norm = xcorr/ref_normalization/signal_normalization/self.clip_len_s
+        progressCallback(n_steps)
+        return timestamp + max_index, xcorr_norm[max_index], xcorr_norm
 
 
     def outlierSmoother(self, threshold, win):
@@ -618,7 +647,7 @@ class HumView(QMainWindow):
         self.b_match.clicked.connect(self.__onMatchClicked)
         result_area.addWidget(self.b_match, 0, 0)
         self.cb_algo = QComboBox()
-        self.cb_algo.addItems(('Euclidian', 'Pearson'))
+        self.cb_algo.addItems(('Convolution', 'Euclidian', 'Pearson'))
         result_area.addWidget(self.cb_algo, 0, 1)
         result_area.addWidget(QLabel("Offset (sec)"), 1, 0)
         self.e_offset = QLineEdit()
@@ -724,18 +753,21 @@ class HumView(QMainWindow):
 
         :param: gridHistory - instanceof the grid history model
         """
-        # FIXME: Remove curve if gridhistory is None
         assert(type(gridHistory == EnfModel))
 
         data = gridHistory.getENF()
-        assert(data is not None and type(data) == np.ndarray)
-        timestamp = gridHistory.getTimestamp()
-        assert timestamp is not None or type(timestamp) == int
+        if data is not None:
+            assert(type(data) == np.ndarray)
+            timestamp = gridHistory.getTimestamp()
+            assert timestamp is not None or type(timestamp) == int
 
-        print("Second from epoch:", timestamp)
+            print("Seconds from epoch:", timestamp)
 
-        timestamps = range(timestamp, timestamp + len(data))
-        self.enfGridCurve.setData(timestamps, data)
+            timestamps = range(timestamp, timestamp + len(data))
+            self.enfGridCurve.setData(timestamps, data)
+        else:
+            self.enfGridCurve.setData([])
+
 
 
     def __plotCorrelation(self, t, corr):
@@ -774,7 +806,6 @@ class HumView(QMainWindow):
                                                   options=options)
         if fileName and fileName != '':
             self.model = EnfModel(self.databasePath)
-            #self.model.loadAudioFile(fileName)
             self.model.fromWaveFile(fileName)
             self.e_fileName.setText(fileName)
             self.e_duration.setText(str(self.model.getDuration()))
@@ -782,9 +813,11 @@ class HumView(QMainWindow):
 
             # Clear all plots
             self.enfAudioCurve.setData([], [])
+            self.enfAudioCurveSmothed.setData([])
             self.correlationCurve.setData([], [])
             self.clipSpectrumCurve.setData([], [])
-            self.enfGridCurve.setData([], [])
+            self.__plotAudioRec(self.model, 0)
+            # self.enfGridCurve.setData([], [])
 
         self.unsetCursor()
         self.__setButtonStatus()
@@ -801,6 +834,11 @@ class HumView(QMainWindow):
         year = int(self.l_year.currentText())
         month = self.l_month.currentIndex() + 1
         self.gm = EnfModel(self.settings.databasePath())
+
+        # Clear old curve
+        self.enfGridCurve.setData([], [])
+        self.__plotGridHistory(self.gm)
+
         if location == 'Test':
             self.gm.fromWaveFile("71000_ref.wav")
             self.gm.makeEnf(int(self.b_nominal_freq.currentText()),
@@ -857,7 +895,7 @@ class HumView(QMainWindow):
         now = datetime.datetime.now()
         print(f"{now} ... starting")
         algo = self.cb_algo.currentText()
-        assert algo in ('Pearson', 'Euclidian')
+        assert algo in ('Convolution', 'Pearson', 'Euclidian')
 
         ## Progress dialog
         matchingSteps = self.model.getMatchingSteps(self.gm)
@@ -871,6 +909,8 @@ class HumView(QMainWindow):
             t, q, corr = self.model.matchPearson(self.gm, self.matchingProgress)
         elif algo == 'Euclidian':
             t, q, corr = self.model.matchEuclidianDist(self.gm, self.matchingProgress)
+        elif algo == 'Convolution':
+            t, q, corr = self.model.matchConv(self.gm, self.matchingProgress)
         if corr is not None:
             self.__showMatches(t, q, corr)
             self.__plotAudioRec(self.model, t_offset=t)
