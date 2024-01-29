@@ -30,18 +30,18 @@ In oder to run the test case:
 
   ![Screenshot](images/screenshot-clip-spectrum.png)
 
-  Here, the clip spectrum is shown.
+  The plot shows the the clip spectrum.
 
   ![Screenshot](images/screenshot-bad-param.png)
 
   Here, a different harmonic has been chosen. No clear 50 Hz component is
   present in the diagram.
 
-- Load the grid frequencies. Leave all settings at their default values and
-  press the *Load* button in the *Grid* group. A blue line will appear in the
-  plot area, indicating the ENF values loaded from a hard-wired test file.
+- Load the grid frequencies. Select *Test* as location and press the *Load*
+  button in the *Grid* group. A blue line will appear in the plot area,
+  indicating the ENF values loaded from a hard-wired test file.
 
-- Press the *Match* button.
+- Leave the metric setting at *Euclidia* and press the *Match* button.
 
   ![Screenshot](images/screenshot-matched.png)
 
@@ -62,7 +62,18 @@ Getting actual ENF values from grid operator is implemented for Great Britain
 and Finland.
 
 Once downloaded from the internet, the extracted ENF series are stored in an
-sqlite database; its filename can be changed in the *settings* dialog.
+sqlite database; its filename should be set in the *settings* dialog.
+
+Only WAV files are supported; their sampling frequency must be 8 kHz or a
+multiple thereof. Reason: The clip is downsampled to 8 kHz during loading, and
+the decimation function supports only integer factors.
+
+The matching process takes several minutes; its time complexity is (clip
+duration in seconds * number of seconds in a the month). Currently, the
+operation is single-theaded.
+
+Error handlng is only rudimentary. When the program runs out of memory, it
+silently crashes. Catching `MemoryError`s does not work.
 
 The application reproduces the test case outlined in
 [github](https://github.com/robert/enf-matching). The original reference
