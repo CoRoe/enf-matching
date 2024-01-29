@@ -256,7 +256,7 @@ class EnfModel():
 
 
     def matchPearson(self, ref, progressCallback):
-        """Given a reference model with ENF values find the best fit with the
+        """Given a reference clip with ENF values find the best fit with the
         own ENF values.
 
         :param ref: The ENF series of the grid
@@ -315,7 +315,7 @@ class EnfModel():
 
 
     def matchEuclidianDist(self, ref, progressCallback):
-        """Given a reference model with ENF values find the best fit with the
+        """Given a reference clip with ENF values find the best fit with the
         own ENF values.
 
         :param ref: The ENF series of the grid
@@ -363,17 +363,20 @@ class EnfModel():
         n_steps = len(ref_enf) - len(enf) + 1
         progressCallback(0)
         try:
-            corr = [spatial.distance.cdist([ref_enf[step:step+len(enf)], enf],
-                                           [ref_enf[step:step+len(enf)], enf],
-                                           'sqeuclidean')[0][1] for step in step_enum(n_steps, progressCallback)
-                                            if not canceled()]
+            mse = [((ref_enf[step:step+len(enf)] - enf) ** 2).mean()
+                    for step in step_enum(n_steps, progressCallback)
+                    if not canceled()]
+            #corr = [spatial.distance.cdist([ref_enf[step:step+len(enf)], enf],
+            #                               [ref_enf[step:step+len(enf)], enf],
+            #                               'sqeuclidean')[0][1] for step in step_enum(n_steps, progressCallback)
+            #                                if not canceled()]
         except StopIteration:
             print("...canceled")
         if self.aborted:
             return None, None, None
         else:
             # Normalise
-            corr = corr / np.sqrt(len(corr))
+            corr = mse / np.sqrt(len(mse))
             min_index = np.argmin(corr)
             print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
             progressCallback(n_steps)
@@ -474,8 +477,8 @@ class HumView(QMainWindow):
     def __init__(self):
         """Initialize variables and create widgets and menu."""
         super().__init__()
-        self.model = None
-        self.gm = None
+        self.clip = None
+        self.grid = None
         self.settings = Settings()
         self.databasePath = self.settings.databasePath()
 
@@ -715,50 +718,51 @@ class HumView(QMainWindow):
 
 
     def __setButtonStatus(self):
-        """ Enables or disables button depending on the model status."""
-        audioDataLoaded = self.model is not None and self.model.getData() is not None
-        audioEnfLoaded = self.model is not None and self.model.getENF() is not None
-        gridEnfLoaded = self.gm is not None and self.gm.getENF() is not None
+        """ Enables or disables button depending on the clip status."""
+        audioDataLoaded = self.clip is not None and self.clip.getData() is not None
+        audioEnfLoaded = self.clip is not None and self.clip.getENF() is not None
+        gridEnfLoaded = self.grid is not None and self.grid.getENF() is not None
 
         self.b_analyse.setEnabled(audioDataLoaded)
         self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
 
 
-    def __plotAudioRec(self, audioRecording, t_offset=0):
-        """ Plot the ENF values of an audio recording."""
+    def __plotAudioRec(self, timestamp=0):
+        """ Plot the ENF values of an audio recording.
+
+        :param timestamp: The timestamp of the clip. Should be specified when the clip
+        has been matched against the grid frequencies.
+
+        """
         # FIXME: Sinnlos, wenn der Clip noch nicht analysiert ist.
-        assert(type(audioRecording) == EnfModel)
+        assert(type(self.clip) == EnfModel)
 
         # Plot FFT of the clip (if already computed)
-        fft_t, fft_a = audioRecording.getFFT()
+        fft_t, fft_a = self.clip.getFFT()
         if fft_t is not None and fft_a is not None:
             self.clipSpectrumCurve.setData(fft_t, fft_a)
 
         # Plot ENF of clip (if already computed)
-        data = audioRecording.getENF()
+        data = self.clip.getENF()
         if data is not None:
-            self.enfAudioCurve.setData(list(range(t_offset, len(data) + t_offset)),
+            self.enfAudioCurve.setData(list(range(timestamp, len(data) + timestamp)),
                                        data)
-        smoothedData = audioRecording.getENFs()
+        smoothedData = self.clip.getENFs()
         if smoothedData is not None:
-            self.enfAudioCurveSmothed.setData(list(range(t_offset, len(smoothedData) + t_offset)),
+            self.enfAudioCurveSmothed.setData(list(range(timestamp, len(smoothedData) + timestamp)),
                                        smoothedData)
 
         #self.e_duration.setText(str(audioRecording.duration()))
-        self.e_sampleRate.setText(str(audioRecording.sampleRate()))
+        self.e_sampleRate.setText(str(self.clip.sampleRate()))
 
 
-    def __plotGridHistory(self, gridHistory):
+    def __plotGridHistory(self):
         """ Plot the grid frequency history.
-
-        :param: gridHistory - instanceof the grid history model
         """
-        assert(type(gridHistory == EnfModel))
-
-        data = gridHistory.getENF()
+        data = self.grid.getENF()
         if data is not None:
             assert(type(data) == np.ndarray)
-            timestamp = gridHistory.getTimestamp()
+            timestamp = self.grid.getTimestamp()
             assert timestamp is not None or type(timestamp) == int
 
             print("Seconds from epoch:", timestamp)
@@ -785,7 +789,7 @@ class HumView(QMainWindow):
 
         """
         # print("Show matches")
-        duration = self.model.getDuration()
+        duration = self.clip.getDuration()
 
         self.e_offset.setText(str(t))
         self.e_quality.setText(str(q))
@@ -805,21 +809,40 @@ class HumView(QMainWindow):
                                                   "","WAV Files (*.wav);;all files (*)",
                                                   options=options)
         if fileName and fileName != '':
-            self.model = EnfModel(self.databasePath)
-            self.model.fromWaveFile(fileName)
+            self.clip = EnfModel(self.databasePath)
+            self.clip.fromWaveFile(fileName)
             self.e_fileName.setText(fileName)
-            self.e_duration.setText(str(self.model.getDuration()))
-            self.e_sampleRate.setText(str(self.model.sampleRate()))
+            self.e_duration.setText(str(self.clip.getDuration()))
+            self.e_sampleRate.setText(str(self.clip.sampleRate()))
 
-            # Clear all plots
+            # Clear all clip-related plots
             self.enfAudioCurve.setData([], [])
             self.enfAudioCurveSmothed.setData([])
             self.correlationCurve.setData([], [])
             self.clipSpectrumCurve.setData([], [])
-            self.__plotAudioRec(self.model, 0)
-            # self.enfGridCurve.setData([], [])
+            self.__plotAudioRec()
 
         self.unsetCursor()
+        self.__setButtonStatus()
+
+
+    def __onAnalyseClicked(self):
+        """ Called when the 'analyse' button is pressed. """
+        # Display wait cursor
+        self.setCursor(Qt.WaitCursor)
+
+        self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
+                           float(self.b_band_size.value()/1000),
+                           int(self.b_harmonic.value()))
+        if self.c_rem_outliers.isChecked():
+            m = self.sp_Outlier_Threshold.value()
+            window = self.sp_window.value()
+            self.clip.outlierSmoother(m, window)
+        self.clip.makeFFT()
+        self.__plotAudioRec()
+
+        self.unsetCursor()
+        self.tabs.setCurrentIndex(1)
         self.__setButtonStatus()
 
 
@@ -833,49 +856,29 @@ class HumView(QMainWindow):
         location = self.l_country.currentText()
         year = int(self.l_year.currentText())
         month = self.l_month.currentIndex() + 1
-        self.gm = EnfModel(self.settings.databasePath())
+        self.grid = EnfModel(self.settings.databasePath())
 
         # Clear old curve
         self.enfGridCurve.setData([], [])
-        self.__plotGridHistory(self.gm)
+        self.__plotGridHistory()
 
         if location == 'Test':
-            self.gm.fromWaveFile("71000_ref.wav")
-            self.gm.makeEnf(int(self.b_nominal_freq.currentText()),
+            self.grid.fromWaveFile("71000_ref.wav")
+            self.grid.makeEnf(int(self.b_nominal_freq.currentText()),
                             float(self.b_band_size.value()/1000),
                             int(self.b_harmonic.value()))
         else:
-            self.gm.loadGridEnf(location, year, month)
-        if self.gm.enf is not None:
-            self.__plotGridHistory(self.gm)
+            self.grid.loadGridEnf(location, year, month)
+        if self.grid.enf is not None:
+            self.__plotGridHistory()
         else:
             dlg = QMessageBox(self)
             dlg.setWindowTitle("Information")
             dlg.setIcon(QMessageBox.Information)
             dlg.setText(f"Could not get {location} ENF data for {year}-{month:02}")
             dlg.exec()
-        if self.model is not None:
-            self.__plotAudioRec(self.model, self.gm.getTimestamp())
-        self.unsetCursor()
-        self.tabs.setCurrentIndex(1)
-        self.__setButtonStatus()
-
-
-    def __onAnalyseClicked(self):
-        """ Called when the 'analyse' button is pressed. """
-        # Display wait cursor
-        self.setCursor(Qt.WaitCursor)
-
-        self.model.makeEnf(int(self.b_nominal_freq.currentText()),
-                           float(self.b_band_size.value()/1000),
-                           int(self.b_harmonic.value()))
-        if self.c_rem_outliers.isChecked():
-            m = self.sp_Outlier_Threshold.value()
-            window = self.sp_window.value()
-            self.model.outlierSmoother(m, window)
-        self.model.makeFFT()
-        self.__plotAudioRec(self.model)
-
+        if self.clip is not None:
+            self.__plotAudioRec(timestamp=self.grid.getTimestamp())
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
         self.__setButtonStatus()
@@ -885,7 +888,7 @@ class HumView(QMainWindow):
         """Called when the 'match' button is clicked.
 
         The method finds the best match of the ENF series of the clip
-        (self.model) and the ENF series of the chosen grid (self.gm).
+        (self.clip) and the ENF series of the chosen grid (self.grid).
         Result of the matching process are the values: (1) The time
         offset in seconds from the beginning of the grid ENF,
         (2) a quality indication, and (3) an array of correlation values.
@@ -898,22 +901,22 @@ class HumView(QMainWindow):
         assert algo in ('Convolution', 'Pearson', 'Euclidian')
 
         ## Progress dialog
-        matchingSteps = self.model.getMatchingSteps(self.gm)
+        matchingSteps = self.clip.getMatchingSteps(self.grid)
         self.progressDialog = QProgressDialog("Trying to locate audio recording, computing best fit ...", "Abort",
                                               0, matchingSteps, self)
         self.progressDialog.setWindowTitle("Matching clip")
         self.progressDialog.setWindowModality(Qt.WindowModal)
-        self.progressDialog.canceled.connect(self.model.onCanceled)
+        self.progressDialog.canceled.connect(self.clip.onCanceled)
 
         if algo == 'Pearson':
-            t, q, corr = self.model.matchPearson(self.gm, self.matchingProgress)
+            t, q, corr = self.clip.matchPearson(self.grid, self.matchingProgress)
         elif algo == 'Euclidian':
-            t, q, corr = self.model.matchEuclidianDist(self.gm, self.matchingProgress)
+            t, q, corr = self.clip.matchEuclidianDist(self.grid, self.matchingProgress)
         elif algo == 'Convolution':
-            t, q, corr = self.model.matchConv(self.gm, self.matchingProgress)
+            t, q, corr = self.clip.matchConv(self.grid, self.matchingProgress)
         if corr is not None:
             self.__showMatches(t, q, corr)
-            self.__plotAudioRec(self.model, t_offset=t)
+            self.__plotAudioRec(timestamp=t)
             # self.controller.__onMatchClicked(self.cb_algo.currentText())
             self.tabs.setCurrentIndex(1)
             # self.unsetCursor()
@@ -1074,13 +1077,14 @@ class Settings():
 
 
 class HumController(QApplication):
-    """ Orchestrate view and model. """
+    """ Orchestrate view and clip. """
     def __init__(self, argv):
         super(HumController, self).__init__(argv)
         self.view = HumView()
 
     def show(self):
         self.view.show()
+
 
 
 #
