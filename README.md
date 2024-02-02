@@ -41,7 +41,7 @@ In oder to run the test case:
   button in the *Grid* group. A blue line will appear in the plot area,
   indicating the ENF values loaded from a hard-wired test file.
 
-- Leave the metric setting at *Euclidia* and press the *Match* button.
+- Leave the metric setting at *Euclidian* and press the *Match* button.
 
   ![Screenshot](images/screenshot-matched.png)
 
@@ -64,9 +64,9 @@ and Finland.
 Once downloaded from the internet, the extracted ENF series are stored in an
 sqlite database; its filename should be set in the *settings* dialog.
 
-Only WAV files are supported; their sampling frequency must be 8 kHz or a
-multiple thereof. Reason: The clip is downsampled to 8 kHz during loading, and
-the decimation function supports only integer factors.
+Input files are always fed into `ffmpeg` for conversion to a WAV file with a
+sample rate of 4000 Hz. All file type supported by `ffmpeg` are hence also
+supported by hum.
 
 The matching process takes several minutes; its time complexity is (clip
 duration in seconds * number of seconds in a the month). Currently, the
