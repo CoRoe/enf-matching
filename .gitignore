@@ -1,2 +1,7 @@
 *.wav
 *~
+build
+bin
+__pycache__
+lib
+lib64
