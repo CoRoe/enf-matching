@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QDialogButtonBox, QProgressDialog)
 from PyQt5.Qt import Qt
 
-from scipy import signal, fft, spatial
+from scipy import signal, fft
 import wave
 import numpy as np
 import datetime
@@ -118,9 +118,22 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
 
 
 class EnfModel():
-    """Models an ENF series.
+    """Model an ENF series.
 
-    Has methods to retrieve ENF series from databases on the internet.
+    The class has two slightly different purposes: Model an ENF series as read
+    from grid databases on the internet, and model an ENF series derived from
+    an audio clip. For the latter purpose, it contains methods to analyse the
+    audio: Fourier transforms, filter, outlier removal, etc.
+
+    When used for grid Data, the ENF series is cached in an sqlite database;
+    the path of this database must be passed a parameter to the constructor,
+    It may also be changed later.
+
+    All time series are internally handled as Numpy arrays with the shape (N,
+    0) where N is the number of items of the array. The timestamp of the first
+    element of a time series is kept in an instance variable; the following
+    elements are evenly spaced by 1 second.
+
     """
 
     def __init__(self, databasePath):
@@ -732,6 +745,16 @@ class HumView(QMainWindow):
 
         :param timestamp: The timestamp of the clip. Should be specified when the clip
         has been matched against the grid frequencies.
+        :param clip.getFFT():
+        :param clip.getENF():
+        :param clip.getENFs():
+
+        | Clip ENF | Grid ENF | Matched | Displayed curves  | Time scale           |
+        |----------+----------+---------+-------------------+----------------------|
+        | yes      |          |         | Clip ENF          | Starting at 0        |
+        | yes      | yes      |         | Clip und Grid ENF | Starting at Grid ENF |
+        |          | yes      |         | Grid ENF          | Starting at Grid ENF |
+        | yes      | yes      | yes     | Clip und Grid ENF | Match posiiton       |
 
         """
         # FIXME: Sinnlos, wenn der Clip noch nicht analysiert ist.
@@ -752,7 +775,6 @@ class HumView(QMainWindow):
             self.enfAudioCurveSmothed.setData(list(range(timestamp, len(smoothedData) + timestamp)),
                                        smoothedData)
 
-        #self.e_duration.setText(str(audioRecording.duration()))
         self.e_sampleRate.setText(str(self.clip.sampleRate()))
 
 
@@ -785,7 +807,7 @@ class HumView(QMainWindow):
         :param t: The timestamp of the match in seconds since the epoch.
         :param q: Descibes the quelity of the match. Interpretation depends
         on the matching algorithm.
-        :param corr:            print()
+        :param corr:
 
         """
         # print("Show matches")
@@ -839,7 +861,8 @@ class HumView(QMainWindow):
             window = self.sp_window.value()
             self.clip.outlierSmoother(m, window)
         self.clip.makeFFT()
-        self.__plotAudioRec()
+        gridtimestamp = self.grid.getTimestamp() if self.grid is not None else 0
+        self.__plotAudioRec(gridtimestamp)
 
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
