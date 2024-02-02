@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QPushButton, QGroupBox, QGridLayout, QCheckBox,
                              QComboBox, QSpinBox, QTabWidget, QDoubleSpinBox,
                              QMenuBar, QAction, QDialog, QMessageBox,
-                             QDialogButtonBox, QProgressDialog)
+                             QDialogButtonBox, QProgressDialog, QErrorMessage)
 from PyQt5.Qt import Qt
 
 from scipy import signal, fft
@@ -856,20 +856,29 @@ class HumView(QMainWindow):
         if fileName and fileName != '':
             self.clip = EnfModel(self.databasePath)
             tmpfn = f"/tmp/hum-tmp-{os.getpid()}.wav"
-            # TODO: Check for errors
-            self.convertToWavFile(fileName, tmpfn)
-            self.clip.fromWaveFile(tmpfn)
-            self.e_fileName.setText(fileName)
-            self.e_duration.setText(str(self.clip.getDuration()))
-            self.e_sampleRate.setText(str(self.clip.sampleRate()))
-            os.remove(tmpfn)
+            if self.convertToWavFile(fileName, tmpfn):
+                self.clip.fromWaveFile(tmpfn)
+                self.e_fileName.setText(fileName)
+                self.e_duration.setText(str(self.clip.getDuration()))
+                self.e_sampleRate.setText(str(self.clip.sampleRate()))
 
-            # Clear all clip-related plots
-            self.enfAudioCurve.setData([], [])
-            self.enfAudioCurveSmothed.setData([])
-            self.correlationCurve.setData([], [])
-            self.clipSpectrumCurve.setData([], [])
-            self.__plotAudioRec()
+                # Clear all clip-related plots
+                self.enfAudioCurve.setData([], [])
+                self.enfAudioCurveSmothed.setData([])
+                self.correlationCurve.setData([], [])
+                self.clipSpectrumCurve.setData([], [])
+                self.__plotAudioRec()
+            else:
+                dlg = QMessageBox(self)
+                dlg.setWindowTitle("Data Error")
+                dlg.setIcon(QMessageBox.Information)
+                dlg.setText(f"Could not handle {fileName}. Maybe it is not a"
+                            " video or audio file.")
+                dlg.exec()
+            try:
+                os.remove(tmpfn)
+            except:
+                pass
 
         self.unsetCursor()
         self.__setButtonStatus()
