@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QPushButton, QGroupBox, QGridLayout, QCheckBox,
                              QComboBox, QSpinBox, QTabWidget, QDoubleSpinBox,
                              QMenuBar, QAction, QDialog, QMessageBox,
-                             QDialogButtonBox, QProgressDialog)
+                             QDialogButtonBox, QProgressDialog, QErrorMessage)
 from PyQt5.Qt import Qt
 
 from scipy import signal, fft
@@ -17,6 +17,7 @@ import wave
 import numpy as np
 import datetime
 import os
+import subprocess
 import json
 from griddata import GridDataAccessFactory
 import pandas as pd
@@ -161,9 +162,11 @@ class EnfModel():
 
         :param fpath: the path to __load the file from rate)
 
-        On exit, self.data is an Numpy array with the samples of the loaded audio recording ('clip').
-        If the WAV file has a sampling rate above 8,000 Hz it is decimated down to 8,000 Hz. The
-        function throws an exception if the original sampling rate is not a multiple of 8,000.
+        On exit, self.data is an Numpy array with the samples of the loaded
+        audio recording ('clip').  If the WAV file has a sampling rate above
+        8,000 Hz it is decimated down to 8,000 Hz. The function throws an
+        exception if the original sampling rate is not a multiple of 8,000.
+
         """
         # TODO: Check big and low endianness
         with wave.open(fpath) as wav_f:
@@ -194,19 +197,22 @@ class EnfModel():
             assert(type(self.data) == np.ndarray)
             self.clip_len_s = int(self.n_frames / self.fs)
             print(f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds")
+
             # Use current time as timestamp
             self.timestamp = int(datetime.datetime.now().timestamp())
 
 
     def makeEnf(self, nominal_freq, freq_band_size, harmonic):
-        """ Creates an ENF series from the sample data.
+        """Creates an ENF series from the sample data.
 
         :param: nominal_freq: Nominal grid frequency in Hz; usually 50 or 60 Hz
         :param: freq_band_size: Size of the frequency band around *nominal_freq* in Hz
         :param: harmonic:
 
-        The method takes self.data (the samples of the audio recording) and computes
-        self.enf (the series of frequencies of the 50 or 60 Hz hum of the recording.)
+        The method takes self.data (the samples of the audio recording) and
+        computes self.enf (the series of frequencies of the 50 or 60 Hz hum of
+        the recording.)
+
         """
         assert(self.data is not None)
 
@@ -582,7 +588,7 @@ class HumView(QMainWindow):
         # 'audio' area
         self.b_load = QPushButton("Load")
         self.b_load.setToolTip("Load a WAV file to analyse.")
-        self.b_load.clicked.connect(self._onOpenWavFileClicked)
+        self.b_load.clicked.connect(self._onOpenFileClicked)
         audio_area.addWidget(self.b_load, 0, 0)
         self.e_fileName = QLineEdit()
         self.e_fileName.setReadOnly(True)
@@ -821,28 +827,58 @@ class HumView(QMainWindow):
         self.__plotCorrelation(t, corr)
 
 
-    def _onOpenWavFileClicked(self):
+    @classmethod
+    def convertToWavFile(cls, fn, tmpfn):
+        """ Convert a multimedia file to a WAV file.
+
+        :param fn: The input file name
+        :param tmp fn: Temporary output file in WAV format.
+        """
+        cmd = ["/usr/bin/ffmpeg", "-i", fn, "-ar", "4000",  "-ac", "1", "-f",
+               "wav", tmpfn]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+        output, errors = p.communicate()
+        print("Output:", output)
+        print("Errors:", errors)
+        return p.returncode == 0
+
+
+    def _onOpenFileClicked(self):
         """ Choose a WAV file woth an audio recording."""
         self.setCursor(Qt.WaitCursor)
 
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
-        fileName, x = QFileDialog.getOpenFileName(self,"Open audio file",
-                                                  "","WAV Files (*.wav);;all files (*)",
+        fileName, x = QFileDialog.getOpenFileName(self,"Open audio or video file",
+                                                  "", "all files (*)",
                                                   options=options)
         if fileName and fileName != '':
             self.clip = EnfModel(self.databasePath)
-            self.clip.fromWaveFile(fileName)
-            self.e_fileName.setText(fileName)
-            self.e_duration.setText(str(self.clip.getDuration()))
-            self.e_sampleRate.setText(str(self.clip.sampleRate()))
+            tmpfn = f"/tmp/hum-tmp-{os.getpid()}.wav"
+            if self.convertToWavFile(fileName, tmpfn):
+                self.clip.fromWaveFile(tmpfn)
+                self.e_fileName.setText(fileName)
+                self.e_duration.setText(str(self.clip.getDuration()))
+                self.e_sampleRate.setText(str(self.clip.sampleRate()))
 
-            # Clear all clip-related plots
-            self.enfAudioCurve.setData([], [])
-            self.enfAudioCurveSmothed.setData([])
-            self.correlationCurve.setData([], [])
-            self.clipSpectrumCurve.setData([], [])
-            self.__plotAudioRec()
+                # Clear all clip-related plots
+                self.enfAudioCurve.setData([], [])
+                self.enfAudioCurveSmothed.setData([])
+                self.correlationCurve.setData([], [])
+                self.clipSpectrumCurve.setData([], [])
+                self.__plotAudioRec()
+            else:
+                dlg = QMessageBox(self)
+                dlg.setWindowTitle("Data Error")
+                dlg.setIcon(QMessageBox.Information)
+                dlg.setText(f"Could not handle {fileName}. Maybe it is not a"
+                            " video or audio file.")
+                dlg.exec()
+            try:
+                os.remove(tmpfn)
+            except:
+                pass
 
         self.unsetCursor()
         self.__setButtonStatus()
@@ -1109,10 +1145,6 @@ class HumController(QApplication):
         self.view.show()
 
 
-
-#
-# Main
-#
 if __name__ == '__main__':
     try:
         app = HumController([])
