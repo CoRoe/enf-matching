@@ -232,19 +232,21 @@ class EnfModel():
         assert type(self.enf) == np.ndarray
 
 
-    def loadGridEnf(self, location, year: int, month: int):
+    def loadGridEnf(self, location, year: int, month: int, n_months):
         """ Load the grid ENF values from a database.
 
         :param location: The name/location of the grid
         :param year: The year
         :param month: The number of the month (1 = Jan, 2 = Feb, ...)
+        :param n_months: Number of months to get grid data for
         """
         assert(self.databasePath)
         assert(type(year) == int and year > 1970)
         assert(type(month) == int and month >= 1 and month <= 12)
         assert location != 'Test', "Handled elsewhere"
-        data_source = GridDataAccessFactory.getInstance(location, self.databasePath)
-        self.enf, self.timestamp = data_source.getEnfSeries(year, month)
+        data_source = GridDataAccessFactory.getInstance(location,
+                                                        self.databasePath)
+        self.enf, self.timestamp = data_source.getEnfSeries(year, month, n_months)
         assert self.enf is None or type(self.enf) == np.ndarray
         assert type(self.timestamp == int)
 
@@ -649,21 +651,33 @@ class HumView(QMainWindow):
             self.l_country.addItem(l)
         self.l_country.addItem("Test")
         grid_area.addWidget(self.l_country, 0, 1)
+
         grid_area.addWidget(QLabel("Year"), 0, 2)
-        self.l_year = QComboBox(self)
+        self.l_year0 = QComboBox(self)
         for y in range(2024, 2000 - 1, -1):
-            self.l_year.addItem(f'{y}')
-        grid_area.addWidget(self.l_year, 0, 3)
+            self.l_year0.addItem(f'{y}')
+        grid_area.addWidget(self.l_year0, 0, 3)
         grid_area.addWidget(QLabel("Month"), 0, 4)
-        self.l_month = QComboBox()
-        self.l_month.addItems(('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        self.l_month0 = QComboBox()
+        self.l_month0.addItems(('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'))
-        grid_area.addWidget(self.l_month, 0, 5)
+        grid_area.addWidget(self.l_month0, 0, 5)
+
+        grid_area.addWidget(QLabel("Year"), 1, 2)
+        self.l_year1 = QComboBox(self)
+        for y in range(2024, 2000 - 1, -1):
+            self.l_year1.addItem(f'{y}')
+        grid_area.addWidget(self.l_year1, 1, 3)
+        grid_area.addWidget(QLabel("Month"), 1, 4)
+        self.l_month1 = QComboBox()
+        self.l_month1.addItems(('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'))
+        grid_area.addWidget(self.l_month1, 1, 5)
+
         self.b_loadGridHistory = QPushButton("Load")
-        grid_area.addWidget(self.b_loadGridHistory, 1, 0)
+        grid_area.addWidget(self.b_loadGridHistory, 2, 0)
         self.b_loadGridHistory.clicked.connect(self.__onLoadGridHistoryClicked)
         grid_area.setColumnStretch(6, 1)
-
 
         self.b_match = QPushButton("Match")
         self.b_match.clicked.connect(self.__onMatchClicked)
@@ -724,6 +738,23 @@ class HumView(QMainWindow):
             print("Success!")
         else:
             print("Cancel!")
+
+
+    def __checkFromToDate(self):
+        """Check if 'to' date is later than 'from' date and computes the
+        number of months between 'from' and 'to' date.
+
+        :returns year0: The 'from' year
+        :returns month0: The 'from'monnth (1..12)
+        :returns n_months: The number of months
+        """
+        year0 = int(self.l_year0.currentText())
+        month0 = self.l_month0.currentIndex()
+        year1 = int(self.l_year1.currentText())
+        month1 = self.l_month1.currentIndex()
+        n_months = (year1 * 12 + month1) - (year0 * 12 + month0) + 1
+        print(f"Get grid frequencies from {year0}-{month0+1:02} to {year1}-{month1+1:02}, {n_months} months")
+        return year0, month0 + 1, n_months
 
 
     def __showEnfSources(self):
@@ -906,15 +937,14 @@ class HumView(QMainWindow):
 
 
     def __onLoadGridHistoryClicked(self):
-        """ Gets historical ENF values from an ENF database. Called when the 'load' button
-        in the 'grid' field is clicked."""
+        """Gets historical ENF values from an ENF database. Called when the 'load'
+        button in the 'grid' field is clicked.
+
+        """
         self.setCursor(Qt.WaitCursor)
 
-        # TODO: Clear old grid history plot
-
         location = self.l_country.currentText()
-        year = int(self.l_year.currentText())
-        month = self.l_month.currentIndex() + 1
+        year, month, n_months = self.__checkFromToDate()
         self.grid = EnfModel(self.settings.databasePath())
 
         # Clear old curve
@@ -927,17 +957,31 @@ class HumView(QMainWindow):
                             float(self.b_band_size.value()/1000),
                             int(self.b_harmonic.value()))
         else:
-            self.grid.loadGridEnf(location, year, month)
-        if self.grid.enf is not None:
-            self.__plotGridHistory()
-        else:
-            dlg = QMessageBox(self)
-            dlg.setWindowTitle("Information")
-            dlg.setIcon(QMessageBox.Information)
-            dlg.setText(f"Could not get {location} ENF data for {year}-{month:02}")
-            dlg.exec()
-        if self.clip is not None:
-            self.__plotAudioRec(timestamp=self.grid.getTimestamp())
+            if n_months < 1:
+                dlg = QMessageBox(self)
+                dlg.setWindowTitle("Error")
+                dlg.setIcon(QMessageBox.Information)
+                dlg.setText(f"'To' date must be later than 'from' date")
+                dlg.exec()
+            elif n_months > 12:
+                dlg = QMessageBox(self)
+                dlg.setWindowTitle("Error")
+                dlg.setIcon(QMessageBox.Information)
+                dlg.setText(f"Limit are 12 months")
+                dlg.exec()
+            else:
+                self.grid.loadGridEnf(location, year, month, n_months)
+                if self.grid.enf is not None:
+                    self.__plotGridHistory()
+                else:
+                    dlg = QMessageBox(self)
+                    dlg.setWindowTitle("Information")
+                    dlg.setIcon(QMessageBox.Information)
+                    dlg.setText(f"Could not get {location} ENF data for {year}-{month:02} for {n_months} months")
+                    dlg.exec()
+                if self.clip is not None:
+                    self.__plotAudioRec(timestamp=self.grid.getTimestamp())
+
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
         self.__setButtonStatus()
