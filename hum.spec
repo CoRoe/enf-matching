@@ -10,7 +10,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PyQt5-sip', 'altgraph', 'charset-normalizer', 'packaging', 'pycryptodomex', 'pyee', 'pyinstaller', 'psutil', 'pyinstaller-hooks-contrib', 'soupsieve', 'texttable', 'typing_extensions'],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
