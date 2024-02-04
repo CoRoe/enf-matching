@@ -1,10 +1,7 @@
-#!/usr/bin/python3
-
 import datetime
 import requests
 from bs4 import BeautifulSoup
 import io
-import os
 import re
 import zipfile
 import py7zr
@@ -52,14 +49,20 @@ class GridDataAccess():
         self.db_path = db_path
         self.table_name = table_name
         self.sql = sq.connect(db_path)
-        pass
 
 
-    def getEnfSeries(self, year, month):
-        """Get a series of ENF values for a given year and month.
+    def getEnfSeries(self, year, month, n_months):
+        """Get a series of ENF values starting at a given year and month.
+
+        :param year: The year to get the ENF series for
+        :param month: The month
+        :param n_months: The number of months
+
+        :returns data: The ENF series or None if not all ENF data were available.
+        :returns timestamp: UNIX timestamp of the beginning of the ENF time series.
         """
 
-        assert(type(year) == int and type(month) == int and month >= 1 and month <= 12)
+        assert(type(year) == int and type(month) == int and month >= 1 and month <= 12 and n_months <= 12)
         # input datetime
         dt = datetime.datetime(year, month, 1, 0, 0)
         # epoch time
@@ -70,31 +73,47 @@ class GridDataAccess():
         timestamp = int(delta.total_seconds())
         print("Second from epoch:", timestamp)
 
-        # Check if ENF data are already in the database
-        data = self.__query_db(year, month)
-        if data is not None:
-            # Is in database
-            return data, timestamp
-        else:
-            # Get the URL of the actual data file; the call is delegated to the derived,
-            # grid-specific class
-            data = None
-            url, daily, dec = self._getDateUrl(year, month)
-            if url:
-                rawdata = self.__downloadFile(url)
-                if rawdata:
-                    suffix = url.split('.')[-1]
-                    if suffix == 'csv':
-                        data = self.__processCsv(rawdata)
-                    elif suffix == '7z':
-                        data = self.__process7zData(rawdata, daily, dec)
-                    elif suffix == 'zip':
-                        data = self.__processZipData(rawdata, daily, dec)
-                    else:
-                        print(f"Unknown file type {suffix}")
-                    if data is not None:
-                        self.__save_to_db(data, year, month)
-            return data, timestamp
+        # Accumulated per-month results
+        total = np.empty((0,), dtype=np.uint16)
+        for t in range(12*year+(month-1), 12*year+(month-1)+n_months):
+            y = t // 12         # year
+            m = t % 12 + 1      # month
+
+            # Check if ENF data are already in the database
+            data = self.__query_db(y, m)
+            assert data is None or type(data) == np.ndarray
+            if data is not None:
+                # Is in database
+                total = np.append(total, data)
+            else:
+                # Get the URL of the actual data file; the call is delegated to the derived,
+                # grid-specific class
+                data = None
+                url, daily, dec = self._getDateUrl(y, m)
+                if url:
+                    encodedData = self.__downloadFile(url)
+                    if encodedData:
+                        suffix = url.split('.')[-1]
+                        if suffix == 'csv':
+                            data = self.__processCsv(encodedData)
+                        elif suffix == '7z':
+                            data = self.__process7zData(encodedData, daily, dec)
+                        elif suffix == 'zip':
+                            data = self.__processZipData(encodedData, daily, dec)
+                        else:
+                            print(f"Unknown file type {suffix}")
+                else:
+                    print("Found no data for {y}-{m:02} at {url}")
+                if data is not None:
+                    assert type(data) == np.ndarray and data.dtype == np.uint16
+                    total = np.append(total, data)
+                    self.__save_to_db(data, y, m)
+                else:
+                    # Fail if ENF values cannot be fetched
+                    return None, None
+
+        assert type(total) == np.ndarray and total.dtype == np.uint16
+        return total, timestamp
 
 
     def __downloadFile(self, url):
@@ -108,7 +127,7 @@ class GridDataAccess():
 
 
     def __processCsv(self, csv: bytes):
-        print("Extracting frequencies ...")
+        print("Extracting frequencies from CSV file ...")
         assert type(csv) == bytes
 
         # Split the input data into rows and use the second item of each row.
@@ -120,7 +139,7 @@ class GridDataAccess():
             return data
         else:
             print(f"{len(data)} records")
-            arr = np.array(data)
+            arr = np.array(data, dtype=np.uint16)
             return arr
 
 
@@ -220,7 +239,7 @@ class GridDataAccess():
             print("...OK")
             blob = res_list[0][1]
             fmt = f"{int(len(blob)/2)}H"
-            l = np.array(st.unpack(fmt, blob))
+            l = np.array(st.unpack(fmt, blob), dtype=np.uint16)
             return l
         else:
             print("... not found")
@@ -228,6 +247,7 @@ class GridDataAccess():
 
 
     def __save_to_db(self, dataset, year, month):
+        assert type(dataset) == np.ndarray and dataset.dtype == np.uint16
         try:
             db_key = str(f"{year:04}-{month:02}")
             print(f"Inserting array of len {len(dataset)} at {db_key}...")
