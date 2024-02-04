@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QMenuBar, QAction, QDialog, QMessageBox,
                              QDialogButtonBox, QProgressDialog, QErrorMessage)
 from PyQt5.Qt import Qt
+from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 from scipy import signal, fft
 import wave
@@ -21,6 +22,7 @@ import subprocess
 import json
 from griddata import GridDataAccessFactory
 import pandas as pd
+from pyqtgraph.Qt import PYQT5
 
 
 def butter_bandpass_filter(data, locut, hicut, fs, order):
@@ -232,7 +234,8 @@ class EnfModel():
         assert type(self.enf) == np.ndarray
 
 
-    def loadGridEnf(self, location, year: int, month: int, n_months):
+    def loadGridEnf(self, location, year: int, month: int, n_months,
+                    progressCallback):
         """ Load the grid ENF values from a database.
 
         :param location: The name/location of the grid
@@ -244,9 +247,11 @@ class EnfModel():
         assert(type(year) == int and year > 1970)
         assert(type(month) == int and month >= 1 and month <= 12)
         assert location != 'Test', "Handled elsewhere"
+
         data_source = GridDataAccessFactory.getInstance(location,
                                                         self.databasePath)
-        self.enf, self.timestamp = data_source.getEnfSeries(year, month, n_months)
+        self.enf, self.timestamp = data_source.getEnfSeries(year, month, n_months,
+                                                            progressCallback)
         assert self.enf is None or type(self.enf) == np.ndarray
         assert type(self.timestamp == int)
 
@@ -421,7 +426,7 @@ class EnfModel():
             enf-np.mean(enf),
             mode='same')
         max_index = np.argmax(xcorr)
-        ref_normalization = pd.Series(grid_freqs).rolling(self.clip_len_s, center=True).std()
+        ref_normalization = ldGridProgDlg.Series(grid_freqs).rolling(self.clip_len_s, center=True).std()
         signal_normalization = np.std(enf)
         xcorr_norm = xcorr/ref_normalization/signal_normalization/self.clip_len_s
         progressCallback(n_steps)
@@ -490,6 +495,28 @@ class EnfModel():
         flag and stop when it is set.
         """
         self.aborted = True
+
+
+class GetGridDataWorker(QObject):
+    finished = pyqtSignal()
+    progress = pyqtSignal(int)
+
+    def __init__(self, grid, location, year, month, n_months,
+                 progressCallback):
+        super().__init__()
+        self.grid = grid
+        self.location = location
+        self.year = year
+        self.month = month
+        self.n_months = n_months
+        self.progressCallback = progressCallback
+
+    @pyqtSlot()
+    def run(self):
+        print("GetGridDataWorker.run()")
+        self.grid.loadGridEnf(self.location, self.year, self.month, self.n_months,
+                              self.progressCallback)
+        self.finished.emit()
 
 
 class HumView(QMainWindow):
@@ -941,7 +968,7 @@ class HumView(QMainWindow):
         button in the 'grid' field is clicked.
 
         """
-        self.setCursor(Qt.WaitCursor)
+        #self.setCursor(Qt.WaitCursor)
 
         location = self.l_country.currentText()
         year, month, n_months = self.__checkFromToDate()
@@ -970,21 +997,53 @@ class HumView(QMainWindow):
                 dlg.setText(f"Limit are 12 months")
                 dlg.exec()
             else:
-                self.grid.loadGridEnf(location, year, month, n_months)
-                if self.grid.enf is not None:
-                    self.__plotGridHistory()
-                else:
-                    dlg = QMessageBox(self)
-                    dlg.setWindowTitle("Information")
-                    dlg.setIcon(QMessageBox.Information)
-                    dlg.setText(f"Could not get {location} ENF data for {year}-{month:02} for {n_months} months")
-                    dlg.exec()
+                self.ldGridProgDlg = QProgressDialog("Loading ENF data from inrternet", "Cancel",
+                                                     0, n_months, self)
+                self.ldGridProgDlg.setWindowTitle("Getting ENF data")
+                self.ldGridProgDlg.setCancelButtonText(None)
+                self.ldGridProgDlg.setWindowModality(Qt.WindowModal)
+                self.ldGridProgDlg.forceShow()
+                self.ldGridProgDlg.setValue(0)
+                #self.ldGridProgDlg.canceled.connect(self.cancelGridHistoryLoading)
+
+                # Move to thread
+                self.loadGridEnfThead = QThread()
+                self.loadGridEnfWorker = GetGridDataWorker(self.grid,
+                                                           location, year, month, n_months,
+                                                           self.__gridHistoryLoadingProgress)
+                self.loadGridEnfWorker.moveToThread(self.loadGridEnfThead)
+                self.loadGridEnfThead.started.connect(self.loadGridEnfWorker.run)
+                self.loadGridEnfWorker.finished.connect(self.onLoadGridHistoryDone)
+                self.loadGridEnfThead.start()
+                #self.grid.loadGridEnf(location, year, month, n_months, self.__gridHistoryLoadingProgress)
+                #self.ldGridProgDlg.cancel()
+
                 if self.clip is not None:
                     self.__plotAudioRec(timestamp=self.grid.getTimestamp())
 
-        self.unsetCursor()
-        self.tabs.setCurrentIndex(1)
+        #self.unsetCursor()
+
+
+    @pyqtSlot()
+    def onLoadGridHistoryDone(self):
+        print("__onLoadGridHistoryDone")
+        self.ldGridProgDlg.cancel()
+        if self.grid.enf is not None:
+            self.__plotGridHistory()
+            self.tabs.setCurrentIndex(1)
+        else:
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Information")
+            dlg.setIcon(QMessageBox.Information)
+            dlg.setText(f"Could not get ENF values")
+            dlg.exec()
         self.__setButtonStatus()
+
+
+    def __gridHistoryLoadingProgress(self, hint, progress):
+        print("__gridHistoryLoadingProgress:", hint, progress)
+        #self.ldGridProgDlg.setLabelText(hint)
+        self.ldGridProgDlg.setValue(progress)
 
 
     def __onMatchClicked(self):
@@ -1005,11 +1064,11 @@ class HumView(QMainWindow):
 
         ## Progress dialog
         matchingSteps = self.clip.getMatchingSteps(self.grid)
-        self.progressDialog = QProgressDialog("Trying to locate audio recording, computing best fit ...", "Abort",
+        self.matchingProgDlg = QProgressDialog("Trying to locate audio recording, computing best fit ...", "Abort",
                                               0, matchingSteps, self)
-        self.progressDialog.setWindowTitle("Matching clip")
-        self.progressDialog.setWindowModality(Qt.WindowModal)
-        self.progressDialog.canceled.connect(self.clip.onCanceled)
+        self.matchingProgDlg.setWindowTitle("Matching clip")
+        self.matchingProgDlg.setWindowModality(Qt.WindowModal)
+        self.matchingProgDlg.canceled.connect(self.clip.onCanceled)
 
         if algo == 'Pearson':
             t, q, corr = self.clip.matchPearson(self.grid, self.matchingProgress)
@@ -1030,7 +1089,7 @@ class HumView(QMainWindow):
 
     def matchingProgress(self, value):
         """Called by matchXxxx method to indicate the matching progress."""
-        self.progressDialog.setValue(value)
+        self.matchingProgDlg.setValue(value)
 
 
 class ShowEnfSourcesDlg(QDialog):

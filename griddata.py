@@ -51,7 +51,7 @@ class GridDataAccess():
         self.sql = sq.connect(db_path)
 
 
-    def getEnfSeries(self, year, month, n_months):
+    def getEnfSeries(self, year, month, n_months, progressCallback):
         """Get a series of ENF values starting at a given year and month.
 
         :param year: The year to get the ENF series for
@@ -61,6 +61,8 @@ class GridDataAccess():
         :returns data: The ENF series or None if not all ENF data were available.
         :returns timestamp: UNIX timestamp of the beginning of the ENF time series.
         """
+
+        progressCount = 0
 
         assert(type(year) == int and type(month) == int and month >= 1 and month <= 12 and n_months <= 12)
         # input datetime
@@ -79,6 +81,8 @@ class GridDataAccess():
             y = t // 12         # year
             m = t % 12 + 1      # month
 
+            progressCallback(f"Querying values for {y}-{m:02} from database...", progressCount)
+
             # Check if ENF data are already in the database
             data = self.__query_db(y, m)
             assert data is None or type(data) == np.ndarray
@@ -88,6 +92,8 @@ class GridDataAccess():
             else:
                 # Get the URL of the actual data file; the call is delegated to the derived,
                 # grid-specific class
+                progressCallback(f"ENF values for {y}-{m:02} not in database; downloading from internet...",
+                                 progressCount)
                 data = None
                 url, daily, dec = self._getDateUrl(y, m)
                 if url:
@@ -103,16 +109,18 @@ class GridDataAccess():
                         else:
                             print(f"Unknown file type {suffix}")
                 else:
-                    print("Found no data for {y}-{m:02} at {url}")
+                    print(f"Found no data for {y}-{m:02} at {url}")
                 if data is not None:
                     assert type(data) == np.ndarray and data.dtype == np.uint16
                     total = np.append(total, data)
                     self.__save_to_db(data, y, m)
+                    progressCount += 1
                 else:
                     # Fail if ENF values cannot be fetched
                     return None, None
 
         assert type(total) == np.ndarray and total.dtype == np.uint16
+        print(f"ENF series contains {total.nbytes/1000000} MB")
         return total, timestamp
 
 
