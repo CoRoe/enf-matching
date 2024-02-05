@@ -426,7 +426,8 @@ class EnfModel():
             enf-np.mean(enf),
             mode='same')
         max_index = np.argmax(xcorr)
-        ref_normalization = ldGridProgDlg.Series(grid_freqs).rolling(self.clip_len_s, center=True).std()
+        ref_normalization = pd.Series(grid_freqs).rolling(self.clip_len_s,
+                                                          center=True).std()
         signal_normalization = np.std(enf)
         xcorr_norm = xcorr/ref_normalization/signal_normalization/self.clip_len_s
         progressCallback(n_steps)
@@ -499,7 +500,7 @@ class EnfModel():
 
 class GetGridDataWorker(QObject):
     finished = pyqtSignal()
-    progress = pyqtSignal(int)
+    progress = pyqtSignal(str, int)
 
     def __init__(self, grid, location, year, month, n_months,
                  progressCallback):
@@ -515,12 +516,48 @@ class GetGridDataWorker(QObject):
     def run(self):
         print("GetGridDataWorker.run()")
         self.grid.loadGridEnf(self.location, self.year, self.month, self.n_months,
-                              self.progressCallback)
+                              self.on_progress)
         self.finished.emit()
+
+    def on_progress(self, hint, progr):
+        self.progress.emit(hint, progr)
 
 
 class HumView(QMainWindow):
     """ Display ENF analysis and result."""
+
+    class GetGridDataWorker(QObject):
+        """Worker task to load ENF data from either the internet or -- if already cacehd --
+        from a databse. Is intended to run in QThread and communicates via signals."""
+
+        finished = pyqtSignal()
+        progress = pyqtSignal(str, int)
+
+        def __init__(self, grid, location, year, month, n_months,
+                     progressCallback):
+            super().__init__()
+            self.grid = grid
+            self.location = location
+            self.year = year
+            self.month = month
+            self.n_months = n_months
+            self.progressCallback = progressCallback
+
+        @pyqtSlot()
+        def run(self):
+            print("GetGridDataWorker.run()")
+            self.grid.loadGridEnf(self.location, self.year, self.month, self.n_months,
+                                  self.__on_progress)
+            self.finished.emit()
+
+        def __on_progress(self, hint, progr):
+            """Send a 'progress' signal. The method is called from the underlying
+            loadGridEnf() method."""
+            self.progress.emit(hint, progr)
+
+
+    month_names = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
 
     def __init__(self):
         """Initialize variables and create widgets and menu."""
@@ -617,7 +654,7 @@ class HumView(QMainWindow):
         # 'audio' area
         self.b_load = QPushButton("Load")
         self.b_load.setToolTip("Load a WAV file to analyse.")
-        self.b_load.clicked.connect(self._onOpenFileClicked)
+        self.b_load.clicked.connect(self.__onOpenFileClicked)
         audio_area.addWidget(self.b_load, 0, 0)
         self.e_fileName = QLineEdit()
         self.e_fileName.setReadOnly(True)
@@ -686,8 +723,7 @@ class HumView(QMainWindow):
         grid_area.addWidget(self.l_year0, 0, 3)
         grid_area.addWidget(QLabel("Month"), 0, 4)
         self.l_month0 = QComboBox()
-        self.l_month0.addItems(('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'))
+        self.l_month0.addItems(HumView.month_names)
         grid_area.addWidget(self.l_month0, 0, 5)
 
         grid_area.addWidget(QLabel("Year"), 1, 2)
@@ -697,8 +733,7 @@ class HumView(QMainWindow):
         grid_area.addWidget(self.l_year1, 1, 3)
         grid_area.addWidget(QLabel("Month"), 1, 4)
         self.l_month1 = QComboBox()
-        self.l_month1.addItems(('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'))
+        self.l_month1.addItems(HumView.month_names)
         grid_area.addWidget(self.l_month1, 1, 5)
 
         self.b_loadGridHistory = QPushButton("Load")
@@ -902,7 +937,7 @@ class HumView(QMainWindow):
         return p.returncode == 0
 
 
-    def _onOpenFileClicked(self):
+    def __onOpenFileClicked(self):
         """ Choose a WAV file woth an audio recording."""
         self.setCursor(Qt.WaitCursor)
 
@@ -964,12 +999,24 @@ class HumView(QMainWindow):
 
 
     def __onLoadGridHistoryClicked(self):
-        """Gets historical ENF values from an ENF database. Called when the 'load'
-        button in the 'grid' field is clicked.
+        """Gets historical ENF values from an ENF database. Called when the
+        'load' button in the 'grid' field is clicked.
+
+        The method checks year and month setting: The 'to' data must be later
+        than the 'from' date; they must not span more than 12 months. This
+        condition exists to limit processing time and memory.
+
+        The method then starts a worker thread to get the ENF data -- either
+        from a local database or from the internet. During this operaton, a
+        progress dialog is displayed. Any data downloaded from the internet is
+        then saved in the database.
+
+        Signals are used to coordinate the GUI thread and the worker thread
+        and the progress dialog.
 
         """
+        # Some description of QT threads:
         # https://gist.github.com/majabojarska/952978eb83bcc19653be138525c4b9da
-        #self.setCursor(Qt.WaitCursor)
 
         location = self.l_country.currentText()
         year, month, n_months = self.__checkFromToDate()
@@ -998,44 +1045,48 @@ class HumView(QMainWindow):
                 dlg.setText(f"Limit are 12 months")
                 dlg.exec()
             else:
-                self.ldGridProgDlg = QProgressDialog("Loading ENF data from inrternet", "Cancel",
+                self.__ldGridProgDlg = QProgressDialog("Loading ENF data from inrternet", "Cancel",
                                                      0, n_months, self)
-                self.ldGridProgDlg.setWindowTitle("Getting ENF data")
-                self.ldGridProgDlg.setCancelButtonText(None)
-                self.ldGridProgDlg.setWindowModality(Qt.WindowModal)
-                self.ldGridProgDlg.forceShow()
-                self.ldGridProgDlg.setValue(0)
-                #self.ldGridProgDlg.canceled.connect(self.cancelGridHistoryLoading)
+                self.__ldGridProgDlg.setWindowTitle("Getting ENF data")
+                self.__ldGridProgDlg.setCancelButtonText(None)
+                self.__ldGridProgDlg.setWindowModality(Qt.WindowModal)
+                self.__ldGridProgDlg.forceShow()
+                self.__ldGridProgDlg.setValue(0)
+                #self.__ldGridProgDlg.canceled.connect(self.cancelGridHistoryLoading)
 
                 # Move to thread
-                self.loadGridEnfThread = QThread()
-                self.loadGridEnfWorker = GetGridDataWorker(self.grid,
+                self.__loadGridEnfThread = QThread()
+                self.__loadGridEnfWorker = GetGridDataWorker(self.grid,
                                                            location, year, month, n_months,
                                                            self.__gridHistoryLoadingProgress)
-                self.loadGridEnfWorker.moveToThread(self.loadGridEnfThread)
+                self.__loadGridEnfWorker.moveToThread(self.__loadGridEnfThread)
 
                 # Connect signale
-                self.loadGridEnfThread.started.connect(self.loadGridEnfWorker.run)
-                self.loadGridEnfThread.finished.connect(self.loadGridEnfThread.deleteLater)
-                self.loadGridEnfWorker.finished.connect(self.loadGridEnfThread.quit)
-                self.loadGridEnfWorker.finished.connect(self.onLoadGridHistoryDone)
-                self.loadGridEnfThread.start()
-                #self.grid.loadGridEnf(location, year, month, n_months, self.__gridHistoryLoadingProgress)
-                #self.ldGridProgDlg.cancel()
+                self.__loadGridEnfThread.started.connect(self.__loadGridEnfWorker.run)
+                self.__loadGridEnfThread.finished.connect(self.__loadGridEnfThread.deleteLater)
+                self.__loadGridEnfWorker.finished.connect(self.__loadGridEnfThread.quit)
+                self.__loadGridEnfWorker.finished.connect(self.__onLoadGridHistoryDone)
+                self.__loadGridEnfWorker.progress.connect(self.__gridHistoryLoadingProgress)
+                self.__loadGridEnfThread.start()
 
                 if self.clip is not None:
                     self.__plotAudioRec(timestamp=self.grid.getTimestamp())
 
-        #self.unsetCursor()
-
 
     @pyqtSlot()
-    def onLoadGridHistoryDone(self):
-        """Called when loadGridEnfWorker() finishes."""
+    def __onLoadGridHistoryDone(self):
+        """Called when __loadGridEnfWorker() finishes."""
         print("__onLoadGridHistoryDone")
-        self.ldGridProgDlg.cancel()
+
+        # Terminate thread and wait
+        self.__loadGridEnfThread.quit()
+        self.__loadGridEnfThread.wait()
+
+        self.__ldGridProgDlg.cancel()
         if self.grid.enf is not None:
+            self.setCursor(Qt.WaitCursor)
             self.__plotGridHistory()
+            self.unsetCursor()
             self.tabs.setCurrentIndex(1)
         else:
             dlg = QMessageBox(self)
@@ -1046,11 +1097,19 @@ class HumView(QMainWindow):
         self.__setButtonStatus()
 
 
+    @pyqtSlot(str, int)
     def __gridHistoryLoadingProgress(self, hint, progress):
+        """Update text and percentage of the progress dialog. Called when the GUI
+        thread receives a 'progress' signal.
+
+        :param hint: Text to be displayed in the progress dialog.
+        :param progress: Progress count, incremented for each month of data retrieved
+        from either the database or from the internet.
+        """
         print("__gridHistoryLoadingProgress:", hint, progress)
-        #self.ldGridProgDlg.setLabelText(hint)
-        self.ldGridProgDlg.setValue(progress)
-        if self.ldGridProgDlg.wasCanceled():
+        self.__ldGridProgDlg.setLabelText(hint)
+        self.__ldGridProgDlg.setValue(progress)
+        if self.__ldGridProgDlg.wasCanceled():
             print("Was canceled")
 
 

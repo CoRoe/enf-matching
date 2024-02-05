@@ -199,11 +199,13 @@ class GridDataAccess():
 
         :param buffer: Buffer with compressed CSV files, in other words, a
         compressed file loaded into memory.
+        :param daily: Indicates if the ZIP file is expected to contain
+        one file per day.
         :param decimationFactor: The CSV file may contain a higher temporal
         resulution that seconds.
 
         Assumption is that *buffer* contains one CSV file per day."""
-        print("__process7zData")
+        print("__processZipData")
         assert type(buffer) == bytes
         assert type(daily) == bool
         assert decimationFactor is None or type(decimationFactor) == int
@@ -230,7 +232,17 @@ class GridDataAccess():
                 assert type(monthly_total) == np.ndarray
                 return monthly_total
             else:
-                print("Not supported")
+                # Check for single embedded CSV file
+                fn_pattern = re.compile(r"\.csv$")
+                for fname in archive.namelist():
+                    if fn_pattern.search(fname):
+                        print("Found", fname, "in ZIP file")
+                        csv = archive.read(fname)
+                        data = [np.uint16(float(row.split(b',')[1]) * 1000) for row in
+                                   csv.splitlines()[1:]]
+                        arr = np.array(data, dtype=np.uint16)
+                        return arr
+                return None
 
 
     def __query_db(self, year, month):
@@ -405,10 +417,13 @@ class GBNationalGrid(GridDataAccess):
 
         ## Converting the JSON response string to a Python dictionary
         if response.ok:
+            url_pattern = re.compile(f"-{year}-{month}.(csv|zip|7z)$")
             ret_data = response.json()['result']
             try:
+                #csv_resource = next(r for r in ret_data['resources']
+                #                    if r['path'].endswith(f"-{year}-{month}.csv"))
                 csv_resource = next(r for r in ret_data['resources']
-                                    if r['path'].endswith(f"-{year}-{month}.csv"))
+                                    if url_pattern.search(r['path']))
                 return csv_resource['path'], False, None
             except Exception as e:
                 print(e)
