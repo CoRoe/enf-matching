@@ -968,6 +968,7 @@ class HumView(QMainWindow):
         button in the 'grid' field is clicked.
 
         """
+        # https://gist.github.com/majabojarska/952978eb83bcc19653be138525c4b9da
         #self.setCursor(Qt.WaitCursor)
 
         location = self.l_country.currentText()
@@ -1007,14 +1008,18 @@ class HumView(QMainWindow):
                 #self.ldGridProgDlg.canceled.connect(self.cancelGridHistoryLoading)
 
                 # Move to thread
-                self.loadGridEnfThead = QThread()
+                self.loadGridEnfThread = QThread()
                 self.loadGridEnfWorker = GetGridDataWorker(self.grid,
                                                            location, year, month, n_months,
                                                            self.__gridHistoryLoadingProgress)
-                self.loadGridEnfWorker.moveToThread(self.loadGridEnfThead)
-                self.loadGridEnfThead.started.connect(self.loadGridEnfWorker.run)
+                self.loadGridEnfWorker.moveToThread(self.loadGridEnfThread)
+
+                # Connect signale
+                self.loadGridEnfThread.started.connect(self.loadGridEnfWorker.run)
+                self.loadGridEnfThread.finished.connect(self.loadGridEnfThread.deleteLater)
+                self.loadGridEnfWorker.finished.connect(self.loadGridEnfThread.quit)
                 self.loadGridEnfWorker.finished.connect(self.onLoadGridHistoryDone)
-                self.loadGridEnfThead.start()
+                self.loadGridEnfThread.start()
                 #self.grid.loadGridEnf(location, year, month, n_months, self.__gridHistoryLoadingProgress)
                 #self.ldGridProgDlg.cancel()
 
@@ -1026,6 +1031,7 @@ class HumView(QMainWindow):
 
     @pyqtSlot()
     def onLoadGridHistoryDone(self):
+        """Called when loadGridEnfWorker() finishes."""
         print("__onLoadGridHistoryDone")
         self.ldGridProgDlg.cancel()
         if self.grid.enf is not None:
@@ -1044,6 +1050,8 @@ class HumView(QMainWindow):
         print("__gridHistoryLoadingProgress:", hint, progress)
         #self.ldGridProgDlg.setLabelText(hint)
         self.ldGridProgDlg.setValue(progress)
+        if self.ldGridProgDlg.wasCanceled():
+            print("Was canceled")
 
 
     def __onMatchClicked(self):

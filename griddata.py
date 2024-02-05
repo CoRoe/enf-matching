@@ -89,6 +89,7 @@ class GridDataAccess():
             if data is not None:
                 # Is in database
                 total = np.append(total, data)
+                progressCount += 1
             else:
                 # Get the URL of the actual data file; the call is delegated to the derived,
                 # grid-specific class
