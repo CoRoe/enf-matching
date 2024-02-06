@@ -623,12 +623,12 @@ class HumView(QMainWindow):
         self.enfPlot.setBackground("w")
         self.enfPlot.showGrid(x=True, y=True)
         self.enfPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        self.enfAudioCurve = self.enfPlot.plot(name="ENF values of WAV file",
+        self.enfAudioCurve = self.enfPlot.plot(name="Clip ENF values",
                                                pen=pg.mkPen(color=(255, 128, 0)))
-        self.enfAudioCurveSmothed = self.enfPlot.plot(name="Smoothed ENF values of WAV file",
-                                               pen=pg.mkPen(color=(204, 0, 0)))
+        self.enfAudioCurveSmothed = self.enfPlot.plot(name="Smoothed clio ENF values",
+                                               pen=pg.mkPen(color=(153, 153, 0)))
         self.enfGridCurve = self.enfPlot.plot(name="Grid frequency history",
-                                               pen=pg.mkPen(color=(0, 102, 102)))
+                                               pen=pg.mkPen(color=(150, 255, 150)))
         self.tabs.addTab(self.enfPlot, "ENF Series")
 
         # Plots the correlation versus time offset
@@ -802,7 +802,7 @@ class HumView(QMainWindow):
             print("Cancel!")
 
 
-    def __checkFromToDate(self):
+    def __checkDateRange(self):
         """Check if 'to' date is later than 'from' date and computes the
         number of months between 'from' and 'to' date.
 
@@ -840,7 +840,7 @@ class HumView(QMainWindow):
 
 
     def __plotAudioRec(self, timestamp=0):
-        """ Plot the ENF values of an audio recording.
+        """ Plot the ENF values and the spectrum of an audio recording.
 
         :param timestamp: The timestamp of the clip. Should be specified when the clip
         has been matched against the grid frequencies.
@@ -938,7 +938,7 @@ class HumView(QMainWindow):
 
 
     def __onOpenFileClicked(self):
-        """ Choose a WAV file woth an audio recording."""
+        """Button to open a multimedia file clicked."""
         self.setCursor(Qt.WaitCursor)
 
         options = QFileDialog.Options()
@@ -1019,7 +1019,7 @@ class HumView(QMainWindow):
         # https://gist.github.com/majabojarska/952978eb83bcc19653be138525c4b9da
 
         location = self.l_country.currentText()
-        year, month, n_months = self.__checkFromToDate()
+        year, month, n_months = self.__checkDateRange()
         self.grid = EnfModel(self.settings.databasePath())
 
         # Clear old curve
@@ -1085,6 +1085,8 @@ class HumView(QMainWindow):
         self.__ldGridProgDlg.cancel()
         if self.grid.enf is not None:
             self.setCursor(Qt.WaitCursor)
+            if self.clip is not None:
+                self.__plotAudioRec(self.grid.getTimestamp())
             self.__plotGridHistory()
             self.unsetCursor()
             self.tabs.setCurrentIndex(1)
@@ -1131,8 +1133,9 @@ class HumView(QMainWindow):
 
         ## Progress dialog
         matchingSteps = self.clip.getMatchingSteps(self.grid)
-        self.matchingProgDlg = QProgressDialog("Trying to locate audio recording, computing best fit ...", "Abort",
-                                              0, matchingSteps, self)
+        self.matchingProgDlg = QProgressDialog("Trying to locate audio recording, computing best fit ...",
+                                               "Cancel",
+                                               0, matchingSteps, self)
         self.matchingProgDlg.setWindowTitle("Matching clip")
         self.matchingProgDlg.setWindowModality(Qt.WindowModal)
         self.matchingProgDlg.canceled.connect(self.clip.onCanceled)

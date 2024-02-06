@@ -73,7 +73,7 @@ class GridDataAccess():
         # subtract Datetime from epoch datetime
         delta = (dt - epoch_time)
         timestamp = int(delta.total_seconds())
-        print("Second from epoch:", timestamp)
+        print("Seconds from epoch:", timestamp)
 
         # Accumulated per-month results
         total = np.empty((0,), dtype=np.uint16)

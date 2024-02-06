@@ -8,7 +8,7 @@ GUI application based on example code from Robert Heaton on
 To run the application:
 
 ```
-./hum.py
+python3 hum.py
 ```
 
 In oder to run the test case:
@@ -48,7 +48,7 @@ In oder to run the test case:
   The diagram shows a good match between the ENF pattern in the audio clip and
   the (test) grid ENF.
 
-# Testing
+## Testing
 
 There a some unit test cases for `griddata.py`. To run them:
 
@@ -56,17 +56,47 @@ There a some unit test cases for `griddata.py`. To run them:
 pytest-3 test.py
 ```
 
-# Status
+## Design Details
+
+- `hum` uses `ffmpeg` to convert media files to the WAV format. The reduce
+  memory requirements, the file is downsampled to 4000 Hz. `hum` loads the
+  entire WAV file into memory; very long files may crash the application.
+
+- Grid data are handled with a granularity of one month. The original reason
+  was that operator provide the data as one file per month; `hum` also stores
+  ENF data as one record per month in the SQL database.
+
+  Up to 12 months ENF data can be used. This limit is set to limit memory
+  usage and processing time.
+
+- ENF data are typically provided as CSV files in a format like:
+
+```
+Timestamp, frequency
+2019-04-01 00:00:00,50.001
+2019-04-01 00:00:01,59.997
+2019-04-01 00:00:02,59.998
+```
+
+  The timestamps are evenly spaced at 1 second (Fingrid 100 ms). `hum` assumes
+  that timestamps start at 00:00:00 of a month and are contiguous without
+  gaps.
+
+  In reality, there are a few gaps so that the time match may be off by a few
+  seconds.
+
+## Status
 
 Getting actual ENF values from grid operator is implemented for Great Britain
-and Finland.
+and Finland. Fingrid have recently changed their API, `hum` has not yet been
+updated.
 
 Once downloaded from the internet, the extracted ENF series are stored in an
 sqlite database; its filename should be set in the *settings* dialog.
 
-Input files are always fed into `ffmpeg` for conversion to a WAV file with a
-sample rate of 4000 Hz. All file type supported by `ffmpeg` are hence also
-supported by hum.
+Input files are always fed into `ffmpeg` for conversion to a WAV file; at the
+same time the sample rate is reduced to 4000 Hz. All file type supported by
+`ffmpeg` are hence also supported by hum.
 
 The matching process takes several minutes; its time complexity is (clip
 duration in seconds * number of seconds in a the month). Currently, the
@@ -81,7 +111,7 @@ file is very long, and my humble Linux notebook ran out of memory during the
 signal processing. I had to shorted the reference file, see the call to ffmpeg
 in https://github.com/CoRoe/enf-matching/blob/main/bin/download-example-files.
 
-# See also
+## See also
 
 https://robertheaton.com/enf/
 
