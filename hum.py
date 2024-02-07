@@ -430,7 +430,7 @@ class EnfModel():
         signal_normalization = np.std(enf)
         xcorr_norm = xcorr/ref_normalization/signal_normalization/self.clip_len_s
         progressCallback(n_steps)
-        return timestamp + max_index, xcorr_norm[max_index], xcorr_norm
+        return timestamp + max_index - self.clip_len_s//2, xcorr_norm[max_index], xcorr_norm
 
 
     def outlierSmoother(self, threshold, win):
@@ -1036,10 +1036,11 @@ class HumView(QMainWindow):
             # As the 'test' does not run in a separate thread do postprocessing
             # here (see __onLoadGridHistoryDone())
             if self.clip is not None:
-                self.__plotAudioRec()
+                self.__plotAudioRec(self.grid.getTimestamp())
             self.__plotGridHistory()
             self.tabs.setCurrentIndex(1)
             self.unsetCursor()
+            self.__setButtonStatus()
         else:
             if n_months < 1:
                 dlg = QMessageBox(self)
