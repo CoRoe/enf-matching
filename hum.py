@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+##!/usr/bin/python3
 
 # https://www.pythonguis.com/tutorials/plotting-pyqtgraph/'
 
@@ -22,7 +22,6 @@ import subprocess
 import json
 from griddata import GridDataAccessFactory
 import pandas as pd
-from pyqtgraph.Qt import PYQT5
 
 
 def butter_bandpass_filter(data, locut, hicut, fs, order):
@@ -702,7 +701,7 @@ class HumView(QMainWindow):
         self.sp_window.setValue(5)
         analyse_area.addWidget(self.sp_window,1, 4)
 
-        analyse_area.setColumnStretch(6, 1)
+        analyse_area.setColumnStretch(7, 1)
 
         self.b_analyse = QPushButton("Analyse")
         self.b_analyse.clicked.connect(self.__onAnalyseClicked)
@@ -1014,6 +1013,8 @@ class HumView(QMainWindow):
         Signals are used to coordinate the GUI thread and the worker thread
         and the progress dialog.
 
+        :See __onLoadGridHistoryDone():
+
         """
         # Some description of QT threads:
         # https://gist.github.com/majabojarska/952978eb83bcc19653be138525c4b9da
@@ -1027,10 +1028,18 @@ class HumView(QMainWindow):
         self.__plotGridHistory()
 
         if location == 'Test':
+            self.setCursor(Qt.WaitCursor)
             self.grid.fromWaveFile("71000_ref.wav")
             self.grid.makeEnf(int(self.b_nominal_freq.currentText()),
                             float(self.b_band_size.value()/1000),
                             int(self.b_harmonic.value()))
+            # As the 'test' does not run in a separate thread do postprocessing
+            # here (see __onLoadGridHistoryDone())
+            if self.clip is not None:
+                self.__plotAudioRec()
+            self.__plotGridHistory()
+            self.tabs.setCurrentIndex(1)
+            self.unsetCursor()
         else:
             if n_months < 1:
                 dlg = QMessageBox(self)
