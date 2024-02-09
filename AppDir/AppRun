@@ -1,0 +1,11 @@
+#!/bin/sh
+
+echo "APPIMAGE:" "${APPIMAGE}"
+
+HERE="$(dirname "$(readlink -f "${0}")")"
+echo "HERE:" ${HERE}
+#export PYTHONPATH=${HERE}/usr/lib
+#export PYTHONHOME=${HERE}/usr/lib
+#echo "PYTHONPATH:" ${PYTHONPATH}
+EXEC="${HERE}/usr/bin/hum"
+exec "${EXEC}"

@@ -24,3 +24,19 @@ test:
 
 clean:
 	rm -r dist build pyvenv.cfg
+
+#freeze:
+#	ls -l build/exe.linux-x86_64-3.10/hum
+
+#
+# Create an app image. Uses first cx_freeze to create an executable that
+# includes the Python3 interpreter but no libraries; the libs are in a
+# parallel directory tree.
+#
+# In a second step, appimagetook creates an app image.
+#
+appimage:
+	python3 setup.py build
+	cp build/exe.linux-x86_64-3.10/hum AppDir/usr/bin
+	cp -r build/exe.linux-x86_64-3.10/lib/* AppDir/usr/bin/lib
+	ARCH=x86_64 appimagetool-x86_64.AppImage AppDir
