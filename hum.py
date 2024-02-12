@@ -9,19 +9,23 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QPushButton, QGroupBox, QGridLayout, QCheckBox,
                              QComboBox, QSpinBox, QTabWidget, QDoubleSpinBox,
                              QMenuBar, QAction, QDialog, QMessageBox,
-                             QDialogButtonBox, QProgressDialog, QErrorMessage)
+                             QDialogButtonBox, QProgressDialog)
 from PyQt5.Qt import Qt
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 from scipy import signal, fft
 import wave
-import numpy as np
-import datetime
+from numpy import (abs, transpose, amax, where, frombuffer, int16,
+                   ndarray, array, corrcoef, argmax, argmin, sqrt, mean,
+                   copy, median, nonzero, append, std)
+#import datetime
+from datetime import datetime
 import os
 import subprocess
 import json
 from griddata import GridDataAccessFactory
-import pandas as pd
+#import pandas as pd
+from pandas import Series
 
 
 def butter_bandpass_filter(data, locut, hicut, fs, order):
@@ -95,9 +99,9 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
     bin_size = f[1] - f[0]
 
     max_freqs = []
-    for spectrum in np.abs(np.transpose(Zxx)):
-        max_amp = np.amax(spectrum)
-        max_freq_idx = np.where(spectrum == max_amp)[0][0]
+    for spectrum in abs(transpose(Zxx)):
+        max_amp = amax(spectrum)
+        max_freq_idx = where(spectrum == max_amp)[0][0]
 
         max_freq = quadratic_interpolation(spectrum, max_freq_idx, bin_size)
         max_freqs.append(max_freq)
@@ -182,10 +186,10 @@ class EnfModel():
                 wav_buf = wav_f.readframes(1000000)
                 while len(wav_buf) > 0:
                     #print(len(wav_buf))
-                    nw = signal.decimate(np.frombuffer(wav_buf, dtype=np.int16), ds_factor)
+                    nw = signal.decimate(frombuffer(wav_buf, dtype=int16), ds_factor)
                     #print("After decimation:", len(nw))
                     if self.data is not None:
-                        self.data = np.append(self.data, nw)
+                        self.data = append(self.data, nw)
                     else:
                         self.data = nw
                     wav_buf = wav_f.readframes(1000000)
@@ -193,14 +197,14 @@ class EnfModel():
             else:
                 # Read entire file into buffer
                 wav_buf = wav_f.readframes(wav_f.getnframes())
-                self.data = np.frombuffer(wav_buf, dtype=np.int16)
+                self.data = frombuffer(wav_buf, dtype=int16)
 
-            assert(type(self.data) == np.ndarray)
+            assert(type(self.data) == ndarray)
             self.clip_len_s = int(self.n_frames / self.fs)
             print(f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds")
 
             # Use current time as timestamp
-            self.timestamp = int(datetime.datetime.now().timestamp())
+            self.timestamp = int(datetime.now().timestamp())
 
 
     def makeEnf(self, nominal_freq, freq_band_size, harmonic):
@@ -229,8 +233,8 @@ class EnfModel():
 
         # ENF are the ENF values
         enf = [int(e * 1000) for e in enf_output['enf']]
-        self.enf = np.array(enf)
-        assert type(self.enf) == np.ndarray
+        self.enf = array(enf)
+        assert type(self.enf) == ndarray
 
 
     def loadGridEnf(self, location, year: int, month: int, n_months,
@@ -251,7 +255,7 @@ class EnfModel():
                                                         self.databasePath)
         self.enf, self.timestamp = data_source.getEnfSeries(year, month, n_months,
                                                             progressCallback)
-        assert self.enf is None or type(self.enf) == np.ndarray
+        assert self.enf is None or type(self.enf) == ndarray
         assert type(self.timestamp == int)
 
 
@@ -268,7 +272,7 @@ class EnfModel():
 
         spectrum = fft.fft(self.data)
         self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
-        self.fft_ampl = np.abs(spectrum)
+        self.fft_ampl = abs(spectrum)
 
         return self.fft_freq, self.fft_ampl
 
@@ -313,7 +317,7 @@ class EnfModel():
             if self.aborted:
                 raise StopIteration
 
-        print(f"Start Pearson correlation computation: {datetime.datetime.now()} ...")
+        print(f"Start Pearson correlation computation: {datetime.now()} ...")
         ref_enf = ref.getENF()
         timestamp = ref.getTimestamp()
         print(f"Len ref_enf: {len(ref_enf)}, len(enf): {len(self.enf)}")
@@ -326,7 +330,7 @@ class EnfModel():
 
         n_steps = len(ref_enf) - len(enf) + 1
         try:
-            corr = [np.corrcoef(ref_enf[step:step+len(enf)], enf)[0][1]
+            corr = [corrcoef(ref_enf[step:step+len(enf)], enf)[0][1]
                     for step in step_enum(n_steps, progressCallback)
                     if not canceled()]
         except StopIteration:
@@ -334,8 +338,8 @@ class EnfModel():
         if self.aborted:
             return None, None, None
         else:
-            max_index = np.argmax(corr)
-            print(f"End Pearson correlation computation {datetime.datetime.now()} ...")
+            max_index = argmax(corr)
+            print(f"End Pearson correlation computation {datetime.now()} ...")
             return timestamp + max_index, corr[max_index], corr
 
 
@@ -375,7 +379,7 @@ class EnfModel():
 
         assert(type(ref) == EnfModel)
 
-        print(f"Start Euclidian correlation computation: {datetime.datetime.now()} ...")
+        print(f"Start Euclidian correlation computation: {datetime.now()} ...")
         ref_enf = ref.getENF()
         timestamp = ref.getTimestamp()
 
@@ -401,9 +405,9 @@ class EnfModel():
             return None, None, None
         else:
             # Normalise
-            corr = mse / np.sqrt(len(mse))
-            min_index = np.argmin(corr)
-            print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
+            corr = mse / sqrt(len(mse))
+            min_index = argmin(corr)
+            print(f"End Euclidian correlation computation {datetime.now()} ...")
             progressCallback(n_steps)
             return timestamp + min_index, corr[min_index], corr
 
@@ -421,13 +425,13 @@ class EnfModel():
 
         progressCallback(0)
         xcorr = signal.correlate(
-            grid_freqs-np.mean(grid_freqs),
-            enf-np.mean(enf),
+            grid_freqs-mean(grid_freqs),
+            enf-mean(enf),
             mode='same')
-        max_index = np.argmax(xcorr)
-        ref_normalization = pd.Series(grid_freqs).rolling(self.clip_len_s,
+        max_index = argmax(xcorr)
+        ref_normalization = Series(grid_freqs).rolling(self.clip_len_s,
                                                           center=True).std()
-        signal_normalization = np.std(enf)
+        signal_normalization = std(enf)
         xcorr_norm = xcorr/ref_normalization/signal_normalization/self.clip_len_s
         progressCallback(n_steps)
         return timestamp + max_index - self.clip_len_s//2, xcorr_norm[max_index], xcorr_norm
@@ -444,18 +448,18 @@ class EnfModel():
         :param self.enf: ENF data generated previous step
         :param self.enfs: Smoothed ENF data
         """
-        x_corr = np.copy(self.enf)
-        d = np.abs(self.enf - np.median(self.enf))
-        mdev = np.median(d)
+        x_corr = copy(self.enf)
+        d = abs(self.enf - median(self.enf))
+        mdev = median(d)
         print(f"Deviation median: {mdev}")
-        idxs_outliers = np.nonzero(d > threshold*mdev)[0]
+        idxs_outliers = nonzero(d > threshold*mdev)[0]
         for i in idxs_outliers:
             if i-win < 0:
-                x_corr[i] = np.median(np.append(self.enf[0:i], self.enf[i+1:i+win+1]))
+                x_corr[i] = median(append(self.enf[0:i], self.enf[i+1:i+win+1]))
             elif i+win+1 > len(self.enf):
-                x_corr[i] = np.median(np.append(self.enf[i-win:i], self.enf[i+1:len(self.enf)]))
+                x_corr[i] = median(append(self.enf[i-win:i], self.enf[i+1:len(self.enf)]))
             else:
-                x_corr[i] = np.median(np.append(self.enf[i-win:i], self.enf[i+1:i+win+1]))
+                x_corr[i] = median(append(self.enf[i-win:i], self.enf[i+1:i+win+1]))
         self.enfs = x_corr
 
     def getENF(self):
@@ -881,7 +885,7 @@ class HumView(QMainWindow):
         """
         data = self.grid.getENF()
         if data is not None:
-            assert(type(data) == np.ndarray)
+            assert(type(data) == ndarray)
             timestamp = self.grid.getTimestamp()
             assert timestamp is not None or type(timestamp) == int
 
@@ -914,7 +918,7 @@ class HumView(QMainWindow):
         self.e_offset.setText(str(t))
         self.e_quality.setText(str(q))
         self.enfPlot.setXRange(t, t + duration, padding=1)
-        ts = datetime.datetime.fromtimestamp(t).strftime('%Y-%m-%d %H:%M:%S')
+        ts = datetime.fromtimestamp(t).strftime('%Y-%m-%d %H:%M:%S')
         self.e_date.setText(ts)
         self.__plotCorrelation(t, corr)
 
@@ -1055,7 +1059,7 @@ class HumView(QMainWindow):
                 dlg.setText(f"Limit are 12 months")
                 dlg.exec()
             else:
-                self.__ldGridProgDlg = QProgressDialog("Loading ENF data from inrternet", "Cancel",
+                self.__ldGridProgDlg = QProgressDialog("Loading ENF data from internet", "Cancel",
                                                      0, n_months, self)
                 self.__ldGridProgDlg.setWindowTitle("Getting ENF data")
                 self.__ldGridProgDlg.setCancelButtonText(None)
@@ -1136,7 +1140,7 @@ class HumView(QMainWindow):
         """
         # self.setCursor(Qt.WaitCursor)
 
-        now = datetime.datetime.now()
+        now = datetime.now()
         print(f"{now} ... starting")
         algo = self.cb_algo.currentText()
         assert algo in ('Convolution', 'Pearson', 'Euclidian')
@@ -1162,7 +1166,7 @@ class HumView(QMainWindow):
             # self.controller.__onMatchClicked(self.cb_algo.currentText())
             self.tabs.setCurrentIndex(1)
             # self.unsetCursor()
-            now = datetime.datetime.now()
+            now = datetime.now()
             print(f"{now} ... done")
         self.__setButtonStatus()
 

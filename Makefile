@@ -1,8 +1,11 @@
 #
+CX_FREEZEDIR = build/exe.linux-x86_64-3.10
 
 all:	test binary
 
 # https://pyinstaller.org/en/stable/usage.html#
+
+
 binary:
 	pyinstaller --onefile \
 		--exclude PyQt5-sip \
@@ -24,6 +27,7 @@ test:
 
 clean:
 	rm -r dist build pyvenv.cfg
+	rm -r AppDir
 
 #freeze:
 #	ls -l build/exe.linux-x86_64-3.10/hum
@@ -35,8 +39,16 @@ clean:
 #
 # In a second step, appimagetook creates an app image.
 #
+# https://cx-freeze.readthedocs.io/en/stable/setup_script.html
+# https://github.com/AppImage/AppImageKit
+#
 appimage:
 	python3 setup.py build
+	if [ -d AppDir ]; then rm -r AppDir; fi
+	cp -r AppDir.template AppDir
 	cp build/exe.linux-x86_64-3.10/hum AppDir/usr/bin
 	cp -r build/exe.linux-x86_64-3.10/lib/* AppDir/usr/bin/lib
 	ARCH=x86_64 appimagetool-x86_64.AppImage AppDir
+
+nuitka:
+	nuitka3 --static-libpython=no --follow-imports hum.py
