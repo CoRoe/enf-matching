@@ -1,6 +1,6 @@
 #
 
-all:	test binary
+all:	test binary appimage
 
 # https://pyinstaller.org/en/stable/usage.html#
 binary:
@@ -23,7 +23,7 @@ test:
 	pytest-3 test.py
 
 clean:
-	rm -r dist build pyvenv.cfg
+	rm -r dist build pyvenv.cfg AppDir
 
 #freeze:
 #	ls -l build/exe.linux-x86_64-3.10/hum
