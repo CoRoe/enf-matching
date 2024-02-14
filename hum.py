@@ -893,10 +893,17 @@ class HumView(QMainWindow):
             self.enfGridCurve.setData([])
 
 
-
-    def __plotCorrelation(self, t, corr):
+    def __plotCorrelation(self, corr):
+        """Plot the correlation time series.
+        :param corr: Array with time series of correlation values.
+        The interpretation of the values
+        depends on the type of correlation performed.
+        """
         # FIXME: Old curves/legends are not removed from plot if a new oneis drawn
-        self.correlationCurve.setData(list(range(len(corr))), corr)
+        # TODO: Consider making 'corr' an instance variable
+        timestamp = self.grid.getTimestamp()
+        timestamps = range(timestamp, timestamp + len(corr))
+        self.correlationCurve.setData(timestamps, corr)
 
 
     def __showMatches(self, t, q, corr):
@@ -916,7 +923,7 @@ class HumView(QMainWindow):
         self.enfPlot.setXRange(t, t + duration, padding=1)
         ts = datetime.datetime.fromtimestamp(t).strftime('%Y-%m-%d %H:%M:%S')
         self.e_date.setText(ts)
-        self.__plotCorrelation(t, corr)
+        self.__plotCorrelation(corr)
 
 
     @classmethod
