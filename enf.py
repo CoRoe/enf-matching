@@ -161,8 +161,7 @@ class Enf():
             self.clip_len_s = int(self.n_frames / self.fs)
             print(f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds")
 
-            # Use current time as _timestamp
-            #self._timestamp = int(datetime.datetime.now().timestamp())
+            self._timestamp = 0
 
 
     def makeEnf(self, nominal_freq, freq_band_size, harmonic):

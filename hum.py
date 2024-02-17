@@ -50,6 +50,11 @@ class GetGridDataWorker(QObject):
 class HumView(QMainWindow):
     """ Display ENF analysis and result."""
 
+    # Colour definitions
+    regionAreaPen = pg.mkPen(color=(10, 10, 80))
+    regionAreaBrush = pg.mkBrush(color=(240, 240, 240))
+    regionAreaHoverBrush = pg.mkBrush(color=(200, 200, 200))
+
     class GetGridDataWorker(QObject):
         """Worker task to load ENF data from either the internet or -- if already cacehd --
         from a databse. Is intended to run in QThread and communicates via signals."""
@@ -316,6 +321,21 @@ class HumView(QMainWindow):
         editMenu.addAction(editSettingsAction)
 
 
+    def __setRegion(self, region):
+        """Set the region.
+
+        :param region: A tuple specifying start and end of the region of interest.
+        """
+        if self.enfAudioCurveRegion is not None:
+            self.enfPlot.removeItem(self.enfAudioCurveRegion)
+        self.enfAudioCurveRegion = pg.LinearRegionItem(values=region,
+                                                       pen=HumView.regionAreaPen,
+                                                       bounds=region)
+        self.enfAudioCurveRegion.setBrush(HumView.regionAreaBrush)
+        self.enfAudioCurveRegion.setHoverBrush(HumView.regionAreaHoverBrush)
+        self.enfPlot.addItem(self.enfAudioCurveRegion)
+
+
     def __editSettings(self):
         """Menu item; pops up a 'setting' dialog."""
         # TODO: Sort out settings. Probbly call 'newSettings' method of all
@@ -409,10 +429,7 @@ class HumView(QMainWindow):
             assert clipTimestamp >= 0
             if self.enfAudioCurveRegion is None:
                 print("__plotAudioRec: Creating enfAudioCurveRegion")
-                self.enfAudioCurveRegion = pg.LinearRegionItem(values=(clipTimestamp, clipTimestamp + len(data)),
-                                                               pen=pg.mkPen(color=(200, 200, 200)),
-                                                               bounds=(clipTimestamp, clipTimestamp + len(data)))
-                self.enfPlot.addItem(self.enfAudioCurveRegion)
+                self.__setRegion((clipTimestamp, clipTimestamp + len(data)))
         else:
             # No data, remove region from plot
             if self.enfAudioCurveRegion is not None:
@@ -425,12 +442,16 @@ class HumView(QMainWindow):
 
     def __plotGridHistory(self):
         """ Plot the grid frequency history.
+
+        In some test case the grid data do not have a sensible valid timestamp;
+        we assume 0 in this case.
         """
         data = self.grid.getENF()
         if data is not None:
             assert(type(data) == np.ndarray)
             timestamp = self.grid.getTimestamp()
-            assert type(timestamp) == int and timestamp > 0
+            if timestamp == None: timestamp = 0
+            assert type(timestamp) == int and timestamp >= 0
 
             print("__plotGridHistory: Grid timestamp:", timestamp)
 
@@ -599,7 +620,7 @@ class HumView(QMainWindow):
             # As the 'test' does not run in a separate thread do postprocessing
             # here (see __onLoadGridHistoryDone())
             if self.clip is not None:
-                self.__plotAudioRec(self.grid.getTimestamp())
+                self.__plotAudioRec()
             self.__plotGridHistory()
             self.tabs.setCurrentIndex(1)
             self.unsetCursor()
@@ -662,14 +683,10 @@ class HumView(QMainWindow):
                 self.clip.setTimestamp(self.grid.getTimestamp())
                 rgn = self.clip.getENFRegion()
 
-                #  --- Apparentlich a problem with setRegion ---
+                #  --- Apparentlich a problem with __setRegion ---
                 # replace with deleteItem(), createRegion()
-                #self.enfAudioCurveRegion.setRegion((float(rgn[0]), float(rgn[1])))
-                self.enfPlot.removeItem(self.enfAudioCurveRegion)
-                self.enfAudioCurveRegion = pg.LinearRegionItem(values=rgn,
-                                                               pen=pg.mkPen(color=(200, 200, 200)),
-                                                               bounds=rgn)
-                self.enfPlot.addItem(self.enfAudioCurveRegion)
+                #self.enfAudioCurveRegion.__setRegion((float(rgn[0]), float(rgn[1])))
+                self.__setRegion(rgn)
                 # --- End fix ---
 
                 rgn = self.enfAudioCurveRegion.getRegion()
@@ -745,7 +762,13 @@ class HumView(QMainWindow):
             self.tabs.setCurrentIndex(1)
             # self.unsetCursor()
             now = datetime.datetime.now()
-            print(f"{now} ... done")
+            print(f"__onMatchClicked: {now} ... done")
+            if self.enfAudioCurveRegion is not None:
+                # --- Adjust region of interest ---
+                print(f"__onMatchClicked: region={self.enfAudioCurveRegion.getRegion()}")
+                rgn = self.clip.getENFRegion()
+                self.__setRegion(rgn)
+                # ----------------------------------
         self.__setButtonStatus()
 
 
