@@ -3,6 +3,7 @@ import datetime
 from scipy import signal, fft
 import numpy as np
 import pandas as pd
+import pyqtgraph as pg
 from griddata import GridDataAccessFactory
 
 
@@ -106,10 +107,14 @@ class Enf():
 
     Essentially a container for a time series of frequency values (ENF)
     and a _timestamp.
+    
+    Clear the curve by setting empty data. 
     """
-    def __init__(self):
+    def __init__(self, ENFcurve):
         self.enf = None
         self._timestamp = None
+        self.ENFcurve = ENFcurve
+        ENFcurve.setData([], [])
 
 
     def getENF(self):
@@ -192,6 +197,16 @@ class Enf():
         enf = [int(e * 1000) for e in enf_output['enf']]
         self.enf = np.array(enf)
         assert type(self.enf) == np.ndarray
+        
+
+    def plotENF(self):
+        """Plot the cureve of ENF values.
+        
+        This works for ENF values in both clips and grid data.
+        """
+        assert self.ENFcurve is not None
+        timestamps = range(self._timestamp, self._timestamp + len(self.enf))
+        self.ENFcurve.setData(timestamps, self.enf)
 
 
 
@@ -208,8 +223,9 @@ class GridEnf(Enf):
     element of a time series is kept in an instance variable; the following
     elements are evenly spaced by 1 second.
 """
-    def __init__(self, databasePath):
-        super().__init__()
+    def __init__(self, databasePath, ENFcurve):
+        assert type(ENFcurve) == pg.PlotDataItem
+        super().__init__(ENFcurve)
         self.databasePath = databasePath
 
 
@@ -247,13 +263,21 @@ class ClipEnf(Enf):
     As the matching process can be length, it also contains some mechinsm
     to cancel the matching process.
     """
-    def __init__(self):
-        super().__init__()
+    def __init__(self, ENFcurve, ENFscurve, spectrumCurve):
+        super().__init__(ENFcurve)
+        self.ENFscurve = ENFscurve
+        self.spectrumCurve = spectrumCurve
+
+        # The curves may pre-exist; clear them
+        self.ENFscurve.setData([], [])
+        self.spectrumCurve.setData([], [])
+
         self.enfs = None
         self.fft_freq = None
         self.fft_ampl = None
         self.data = None
         self.aborted = False
+        self.region = None
         self._timestamp = 0
 
 
@@ -529,3 +553,17 @@ class ClipEnf(Enf):
             else:
                 x_corr[i] = np.median(np.append(self.enf[i-win:i], self.enf[i+1:i+win+1]))
         self.enfs = x_corr
+        
+        
+    def plotENFsmoothed(self):
+        if self.enfs is not None:
+            timestamps = list(range(self._timestamp), self._timestamp + len(self.enfs))
+            self.ENFscurve.setData(timestamps, self.enfs)
+        else:
+            self.ENFscurve.setData([], [])
+            
+            
+    def plotSpectrum(self):
+        assert self.fft_ampl is not None and self.fft_freq is not None
+        self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)
+

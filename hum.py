@@ -384,7 +384,7 @@ class HumView(QMainWindow):
         self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
 
 
-    def __plotAudioRec(self):
+    def __plotAudioRec_unused(self):
         """ Plot the ENF values and the spectrum of an audio recording.
 
         :param clip.getFFT():
@@ -440,7 +440,7 @@ class HumView(QMainWindow):
         self.e_sampleRate.setText(str(self.clip.sampleRate()))
 
 
-    def __plotGridHistory(self):
+    def __plotGridHistory_unused(self):
         """ Plot the grid frequency history.
 
         In some test case the grid data do not have a sensible valid timestamp;
@@ -461,7 +461,7 @@ class HumView(QMainWindow):
             self.enfGridCurve.setData([])
 
 
-    def __plotCorrelation(self, corr):
+    def __plotCorrelation_unused(self, corr):
         """Plot the correlation time series.
         :param corr: Array with time series of correlation values.
         The interpretation of the values
@@ -525,7 +525,8 @@ class HumView(QMainWindow):
                                                   "", "all files (*)",
                                                   options=options)
         if fileName and fileName != '':
-            self.clip = ClipEnf()
+            self.clip = ClipEnf(self.enfAudioCurve, self.enfAudioCurveSmothed,
+                                self.clipSpectrumCurve, self.correlationCurve)
             tmpfn = f"/tmp/hum-tmp-{os.getpid()}.wav"
             if self.convertToWavFile(fileName, tmpfn):
                 self.clip.fromWaveFile(tmpfn)
@@ -534,14 +535,10 @@ class HumView(QMainWindow):
                 self.e_sampleRate.setText(str(self.clip.sampleRate()))
 
                 # Clear all clip-related plots and the region
-                self.enfAudioCurve.setData([], [])
-                self.enfAudioCurveSmothed.setData([])
-                self.correlationCurve.setData([], [])
-                self.clipSpectrumCurve.setData([], [])
                 if self.enfAudioCurveRegion:
                     self.enfPlot.removeItem(self.enfAudioCurveRegion)
                     self.enfAudioCurveRegion = None
-                self.__plotAudioRec()
+                #self.__plotAudioRec()
             else:
                 dlg = QMessageBox(self)
                 dlg.setWindowTitle("Data Error")
@@ -574,7 +571,10 @@ class HumView(QMainWindow):
         if self.grid is not None:
             gridtimestamp = self.grid.getTimestamp()
             self.clip.setTimestamp(gridtimestamp)
-        self.__plotAudioRec()
+        #self.__plotAudioRec()
+        self.clip.plotENF()
+        self.clip.plotENFsmoothed()
+        self.clip.plotSpectrum()
 
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
@@ -605,11 +605,12 @@ class HumView(QMainWindow):
 
         location = self.l_country.currentText()
         year, month, n_months = self.__checkDateRange()
-        self.grid = GridEnf(self.settings.databasePath())
+        self.grid = GridEnf(self.settings.databasePath(), self.enfGridCurve)
 
         # Clear old curve
-        self.enfGridCurve.setData([], [])
-        self.__plotGridHistory()
+        #self.enfGridCurve.setData([], [])
+        #self.__plotGridHistory()
+        #self.grid.plotENF()
 
         if location == 'Test':
             self.setCursor(Qt.WaitCursor)
@@ -619,9 +620,10 @@ class HumView(QMainWindow):
                             int(self.b_harmonic.value()))
             # As the 'test' does not run in a separate thread do postprocessing
             # here (see __onLoadGridHistoryDone())
-            if self.clip is not None:
-                self.__plotAudioRec()
-            self.__plotGridHistory()
+            #if self.clip is not None:
+            #    self.__plotAudioRec()
+            #self.__plotGridHistory()
+            self.grid.plotENF()
             self.tabs.setCurrentIndex(1)
             self.unsetCursor()
             self.__setButtonStatus()
@@ -691,8 +693,10 @@ class HumView(QMainWindow):
 
                 rgn = self.enfAudioCurveRegion.getRegion()
                 print(f"__onLoadGridHistoryDone: enfAudioCurveRegion={rgn}")
-            self.__plotAudioRec()
-            self.__plotGridHistory()
+            self.clip.plotENF()
+            self.clip.plotENFsCurve()
+            self.clip.plotCorrelation()
+            self.grid.plotENF()
             self.unsetCursor()
             self.tabs.setCurrentIndex(1)
         else:
@@ -730,8 +734,9 @@ class HumView(QMainWindow):
         (2) a quality indication, and (3) an array of correlation values.
         """
 
-        roi = self.enfAudioCurveRegion.getRegion()
-        self.clip.setENFRegion((int(roi[0]), int(roi[1])))
+        if self.enfAudioCurveRegion is not None:
+            roi = self.enfAudioCurveRegion.getRegion()
+            self.clip.setENFRegion((int(roi[0]), int(roi[1])))
 
         now = datetime.datetime.now()
         print(f"{now} ... starting")
@@ -757,8 +762,9 @@ class HumView(QMainWindow):
             self.__showMatches(t, q, corr)
             # Adjust the timestamp of the clip
             self.clip.setTimestamp(t)
-            self.__plotAudioRec()
-            # self.controller.__onMatchClicked(self.cb_algo.currentText())
+            self.clip.plotENF()
+            self.clip.plotENFsmoothed()
+            self.clip.plotCorrelation()
             self.tabs.setCurrentIndex(1)
             # self.unsetCursor()
             now = datetime.datetime.now()
