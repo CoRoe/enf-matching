@@ -56,7 +56,7 @@ class HumView(QMainWindow):
     spectrumCurveColour = pg.mkPen(color=(255, 0, 0))
     ENFvalueColour = pg.mkPen(color=(255, 128, 0))
     ENFsmoothedValueColour = pg.mkPen(color=(153, 153, 0))
-    GridCurveColour = pg.mkPen(color=(150, 255, 150))
+    GridCurveColour = pg.mkPen(color=(0, 150, 70))
     correlationCurveColour = pg.mkPen(color=(255, 0, 255))
 
     class GetGridDataWorker(QObject):
@@ -325,7 +325,7 @@ class HumView(QMainWindow):
         editMenu.addAction(editSettingsAction)
 
 
-    def __setRegion(self, region):
+    def __setRegion(self, region, movable=True):
         """Set the region of interest.
 
         :param region: A tuple specifying start and end of the region of interest.
@@ -338,7 +338,9 @@ class HumView(QMainWindow):
         self.enfAudioCurveRegion.setBrush(HumView.regionAreaBrush)
         self.enfAudioCurveRegion.setHoverBrush(HumView.regionAreaHoverBrush)
         self.enfAudioCurveRegion.sigRegionChangeFinished.connect(self.__onRegionChanged)
+        self.enfAudioCurveRegion.setMovable(movable)
         self.enfPlot.addItem(self.enfAudioCurveRegion)
+
 
 
     def __editSettings(self):
@@ -462,6 +464,9 @@ class HumView(QMainWindow):
         if self.grid is not None:
             gridtimestamp = self.grid.getTimestamp()
             self.clip.setTimestamp(gridtimestamp)
+
+        # Set range of the x axis to the clip length
+        self.enfPlot.setXRange(0, self.clip.clip_len_s)
 
         # Plot curves
         self.clip.plotENF()
@@ -676,7 +681,7 @@ class HumView(QMainWindow):
                 # --- Adjust region of interest ---
                 print(f"__onMatchClicked: region={self.enfAudioCurveRegion.getRegion()}")
                 rgn = self.clip.getENFRegion()
-                self.__setRegion(rgn)
+                self.__setRegion(rgn, movable=False)
                 # ----------------------------------
 
         self.__setButtonStatus()
