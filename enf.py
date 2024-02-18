@@ -118,17 +118,22 @@ class Enf():
         ENFcurve.setData([], [])
 
 
-    def _getENF(self, smoothedPreferred=True):
+    def _getENF(self, smoothedPreferred=True, onlyRegion=True):
         """Get the ENF time series.
 
         :param smoothedPreferred: If True, the smoothed version is handed out
         if it exists.
-        :returns array with time series of ENF values.
+        :param onlyRegion: If true then only the ENF data within the region
+        :returns: array with time series of ENF values.
         """
         if smoothedPreferred and self.enfs is not None:
-            return self.enfs
+            enf = self.enfs
         else:
-            return self.enf
+            enf = self.enf
+        if onlyRegion:
+            return enf[self.region[0]:self.region[1]]
+        else:
+            return enf
 
 
     def ENFavailable(self):
@@ -365,7 +370,9 @@ class GridEnf(Enf):
         else:
             max_index = np.argmax(corr)
             print(f"End Pearson correlation computation {datetime.datetime.now()} ...")
-            self.t_match = self._timestamp + max_index
+            # Set t_match to the beginning of the clip (not to the region where
+            # that was used for matching)
+            self.t_match = self._timestamp + max_index - clip.region[0]
             self.quality = corr[max_index]
             self.corr = corr
             #return timestamp + max_index, corr[max_index], corr
@@ -436,7 +443,7 @@ class GridEnf(Enf):
             print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
             progressCallback(n_steps)
             #return timestamp + min_index, corr[min_index], corr
-            self.t_match = self._timestamp + min_index
+            self.t_match = self._timestamp + min_index - clip.region[0]
             self.quality = corr[min_index]
             self.corr = corr
             return True
@@ -471,14 +478,14 @@ class GridEnf(Enf):
             enf-np.mean(enf),
             mode='same')
         max_index = np.argmax(xcorr)
-        ref_normalization = pd.Series(grid_freqs).rolling(clip.clip_len_s,
+        ref_normalization = pd.Series(grid_freqs).rolling(len(enf),
                                                           center=True).std()
         signal_normalization = np.std(enf)
-        xcorr_norm = xcorr/ref_normalization/signal_normalization/clip.clip_len_s
+        xcorr_norm = xcorr/ref_normalization/signal_normalization/len(enf)
 
         # Store results in instance variables
         self.corr = xcorr_norm
-        self.t_match = timestamp + max_index - clip.clip_len_s//2
+        self.t_match = timestamp + max_index - len(enf)//2 - clip.region[0]
         self.quality = xcorr_norm[max_index]
 
         # Signal that we are done
@@ -487,6 +494,10 @@ class GridEnf(Enf):
         # Always succeeds
         return True
         #return timestamp + max_index - self.clip_len_s//2, xcorr_norm[max_index], xcorr_norm
+
+
+    def getTimestamp(self):
+        return self._timestamp
 
 
     def getMatchTimestamp(self):
@@ -578,7 +589,7 @@ class ClipEnf(Enf):
         return rgn
 
 
-    def getFFT(self):
+    def getFFT_unused(self):
         """Get the spectrum.
 
         Returns FFT frequencies and amplitudes.
