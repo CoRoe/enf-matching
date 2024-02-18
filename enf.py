@@ -107,25 +107,37 @@ class Enf():
 
     Essentially a container for a time series of frequency values (ENF)
     and a _timestamp.
-    
-    Clear the curve by setting empty data. 
+
+    Clear the curve by setting empty data.
     """
     def __init__(self, ENFcurve):
         self.enf = None
+        self.enfs = None
         self._timestamp = None
         self.ENFcurve = ENFcurve
         ENFcurve.setData([], [])
 
 
-    def getENF(self):
-        return self.enf
+    def _getENF(self, smoothedPreferred=True):
+        """Get the ENF time series.
+
+        :param smoothedPreferred: If True, the smoothed version is handed out
+        if it exists.
+        :returns array with time series of ENF values.
+        """
+        if smoothedPreferred and self.enfs is not None:
+            return self.enfs
+        else:
+            return self.enf
 
 
-    def getTimestamp(self):
-        return self._timestamp
+    def ENFavailable(self):
+        """Check if ENF value are available. The smoothed data may
+        or may not be availble."""
+        return self.enf is not None
 
 
-    def fromWaveFile(self, fpath):
+    def loadWaveFile(self, fpath):
         """Loads wave_buf .wav file and computes ENF and SFT.
 
         :param fpath: the path to __load the file from rate)
@@ -166,7 +178,10 @@ class Enf():
             self.clip_len_s = int(self.n_frames / self.fs)
             print(f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds")
 
-            self._timestamp = 0
+        self._timestamp = 0
+
+        # Set the region to the whole clip
+        self.region = (0, self.clip_len_s)
 
 
     def makeEnf(self, nominal_freq, freq_band_size, harmonic):
@@ -197,17 +212,16 @@ class Enf():
         enf = [int(e * 1000) for e in enf_output['enf']]
         self.enf = np.array(enf)
         assert type(self.enf) == np.ndarray
-        
+
 
     def plotENF(self):
         """Plot the cureve of ENF values.
-        
+
         This works for ENF values in both clips and grid data.
         """
         assert self.ENFcurve is not None
         timestamps = range(self._timestamp, self._timestamp + len(self.enf))
         self.ENFcurve.setData(timestamps, self.enf)
-
 
 
 class GridEnf(Enf):
@@ -223,10 +237,12 @@ class GridEnf(Enf):
     element of a time series is kept in an instance variable; the following
     elements are evenly spaced by 1 second.
 """
-    def __init__(self, databasePath, ENFcurve):
+    def __init__(self, databasePath, ENFcurve, correlationCurve):
         assert type(ENFcurve) == pg.PlotDataItem
         super().__init__(ENFcurve)
+        self.correlationCurve = correlationCurve
         self.databasePath = databasePath
+        self.t_match = None
 
 
     def setDatabasePath(self, path):
@@ -254,6 +270,240 @@ class GridEnf(Enf):
         assert self.enf is None or type(self.enf) == np.ndarray
         assert type(self._timestamp == int)
 
+
+    def onCanceled(self):
+        """Handles the 'cancel' signal from a QProgressDialog.
+
+        Sets the instance variable aborted. Lengthy operations check this
+        flag and stop when it is set.
+        """
+        self.aborted = True
+
+
+    def getMatchingSteps(self, clip):
+        """Return the number of number of iterations. Usefull for a progress
+        indicator."""
+        assert type(clip) == ClipEnf
+        n_steps = len(self.enf) - len(clip._getENF()) + 1
+        return n_steps
+
+
+    def matchClip(self, clip, algo, progressCallback):
+        """Compute the time lag where the clip data best matches the grid data.
+
+        :param clip: The clip to be matched.
+        :param algo: The matching algorithm to use.
+        :param progressCallback: Function to be invoked to signal progreee
+        to the caller.
+
+        :returns: True if the function terminated normally or False if the
+        computing was cancelled.
+        """
+        assert algo in ('Pearson', 'Euclidian', 'Convolution')
+        if algo == 'Pearson':
+            r = self.__matchPearson(clip, progressCallback)
+        elif algo == 'Euclidian':
+            r = self.__matchEuclidianDist(clip, progressCallback)
+        elif algo == 'Convolution':
+            r = self.__matchConv(clip, progressCallback)
+        else:
+            r = False
+        if r:
+            self.matchRange = (self.t_match, self.t_match + clip.getDuration())
+        return r
+
+
+    def __matchPearson(self, clip, progressCallback):
+        """Given a reference clip with ENF values find the best fit with the
+        own ENF values.
+
+        :param clip: The ENF series of the grid
+        :param progressCallback: Function to be called once in a while
+        to signal the progress of the processing.
+        :returns: The index into the reference series of thebets match; the
+        correlation at that index, an array of correlations for all possible
+        indices.
+
+        No -- the _timestamp of the best match.
+
+        The method computes the Pearson correlation between the ENF values in
+        the clip and the grid.
+
+        See: https://realpython.com/numpy-scipy-pandas-correlation-python/
+        https://numpy.org/doc/stable/reference/generated/numpy.corrcoef.html
+        """
+        assert(type(clip) == ClipEnf)
+
+        self.aborted = False
+
+        def step_enum(steps, progressCallback):
+            for n in range(steps):
+                if n % 1000 == 0:
+                    progressCallback(n)
+                yield n
+
+        def canceled():
+            if self.aborted:
+                raise StopIteration
+
+        print(f"Start Pearson correlation computation: {datetime.datetime.now()} ...")
+        clip_enf = clip._getENF()
+        #timestamp = clip.getTimestamp()
+        print(f"Len clip_enf: {len(clip_enf)}, len(enf): {len(self.enf)}")
+
+        enf = self.enf
+        n_steps = len(enf) - len(clip_enf) + 1
+
+        try:
+            corr = [np.corrcoef(enf[step:step+len(clip_enf)], clip_enf)[0][1]
+                    for step in step_enum(n_steps, progressCallback)
+                    if not canceled()]
+        except StopIteration:
+            print("Cancelled...")
+        if self.aborted:
+            return False
+        else:
+            max_index = np.argmax(corr)
+            print(f"End Pearson correlation computation {datetime.datetime.now()} ...")
+            self.t_match = self._timestamp + max_index
+            self.quality = corr[max_index]
+            self.corr = corr
+            #return timestamp + max_index, corr[max_index], corr
+            progressCallback(n_steps)
+            return True
+
+
+    def __matchEuclidianDist(self, clip, progressCallback):
+        """Given a reference clip with ENF values find the best fit with the
+        own ENF values.
+
+        :param clip: The ENF series of the grid
+        :param progressCallback: Function to be called once in a while
+        to signal the progress of the processing.
+        :returns: The index into the reference series of thebets match; the
+        correlation at that index, an array of correlations for all possible
+        indices.
+
+        The method computes the Euclidian distance between the ENF values in
+        the clip and the grid.
+
+        See: https://www.geeksforgeeks.org/python-distance-between-collections-of-inputs/
+
+        The methond constantly monitors self.aborted and stops if its value is True.
+        """
+
+        # Apparently the StopIteration exception can only be raised from within
+        # the condition function. Unfortunate, because two functions are needed
+        # in the list comprehension.
+        self.aborted = False
+
+        def step_enum(steps, progressCallback):
+            for n in range(steps):
+                if n % 1000 == 0:
+                    progressCallback(n)
+                yield n
+
+        def canceled():
+            if self.aborted:
+                raise StopIteration
+
+        assert(type(clip) == ClipEnf)
+
+        print(f"Start Euclidian correlation computation: {datetime.datetime.now()} ...")
+        #timestamp = clip.getTimestamp()
+
+        enf = self.enf
+        clip_enf = clip._getENF()
+
+        n_steps = len(enf) - len(clip_enf) + 1
+        progressCallback(0)
+        try:
+            mse = [((enf[step:step+len(clip_enf)] - clip_enf) ** 2).mean()
+                    for step in step_enum(n_steps, progressCallback)
+                    if not canceled()]
+            #corr = [spatial.distance.cdist([clip_enf[step:step+len(enf)], enf],
+            #                               [clip_enf[step:step+len(enf)], enf],
+            #                               'sqeuclidean')[0][1] for step in step_enum(n_steps, progressCallback)
+            #                                if not canceled()]
+        except StopIteration:
+            print("...canceled")
+        if self.aborted:
+            return False
+        else:
+            # Normalise
+            corr = mse / np.sqrt(len(mse))
+            min_index = np.argmin(corr)
+            print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
+            progressCallback(n_steps)
+            #return timestamp + min_index, corr[min_index], corr
+            self.t_match = self._timestamp + min_index
+            self.quality = corr[min_index]
+            self.corr = corr
+            return True
+
+
+    def __matchConv(self, clip, progressCallback):
+        """Compute correlation between clip ENF and grid ENF.
+
+        :param clip: A GridEnf object representing the grid frequencies.
+        :param progressCallback: Function to be called to signal progress.
+        Used for a progress bar as feedback to the user.
+        """
+        print("__matchConv")
+        grid_freqs = self.enf
+        # Get the region of interest
+        enf = clip._getENF()
+        #if self.enfs is not None:
+        #    enf = self.enfs
+        #else:
+        #    enf = self.enf
+        #if self.region is not None:
+        #    t0 = self.region[0]
+        #    t1 = self.region[1]
+        #    enf = enf[t0:t1]
+        #else:
+        #    t0 = 0
+        n_steps = len(grid_freqs) - len(enf) + 1
+        timestamp = self._timestamp
+        progressCallback(0)
+        xcorr = signal.correlate(
+            grid_freqs-np.mean(grid_freqs),
+            enf-np.mean(enf),
+            mode='same')
+        max_index = np.argmax(xcorr)
+        ref_normalization = pd.Series(grid_freqs).rolling(clip.clip_len_s,
+                                                          center=True).std()
+        signal_normalization = np.std(enf)
+        xcorr_norm = xcorr/ref_normalization/signal_normalization/clip.clip_len_s
+
+        # Store results in instance variables
+        self.corr = xcorr_norm
+        self.t_match = timestamp + max_index - clip.clip_len_s//2
+        self.quality = xcorr_norm[max_index]
+
+        # Signal that we are done
+        progressCallback(n_steps)
+
+        # Always succeeds
+        return True
+        #return timestamp + max_index - self.clip_len_s//2, xcorr_norm[max_index], xcorr_norm
+
+
+    def getMatchTimestamp(self):
+        return self.t_match
+
+
+    def getMatchRange(self):
+        return self.matchRange
+
+
+    def getMatchQuality(self):
+        return self.quality
+
+
+    def plotCorrelation(self):
+        timestamps = list(range(self._timestamp, self._timestamp + len(self.corr)))
+        self.correlationCurve.setData(timestamps, self.corr)
 
 
 class ClipEnf(Enf):
@@ -298,12 +548,10 @@ class ClipEnf(Enf):
 
         return self.fft_freq, self.fft_ampl
 
-    def getData(self):
-        return self.data
 
-
-    def getENFs(self):
-        return self.enfs
+    def fileLoaded(self):
+        """Check if a file has been loaded and its PCM data are vailebale."""
+        return self.data is not None
 
 
     def setTimestamp(self, timestamp):
@@ -348,187 +596,6 @@ class ClipEnf(Enf):
         return self.fs
 
 
-    def onCanceled(self):
-        """Handles the 'cancel' signal from a QProgressDialog.
-
-        Sets the instance variable aborted. Lengthy operations check this
-        flag and stop when it is set.
-        """
-        self.aborted = True
-
-
-    def getMatchingSteps(self, gridModel):
-        """Return the number of number of iterations. Usefull for a progress
-        indicator."""
-        assert type(gridModel) == GridEnf
-        n_steps = len(gridModel.getENF()) - len(self.enf) + 1
-        return n_steps
-
-
-    def matchPearson(self, ref, progressCallback):
-        """Given a reference clip with ENF values find the best fit with the
-        own ENF values.
-
-        :param ref: The ENF series of the grid
-        :param progressCallback: Function to be called once in a while
-        to signal the progress of the processing.
-        :returns: The index into the reference series of thebets match; the
-        correlation at that index, an array of correlations for all possible
-        indices.
-
-        No -- the _timestamp of the best match.
-
-        The method computes the Pearson correlation between the ENF values in
-        the clip and the grid.
-
-        See: https://realpython.com/numpy-scipy-pandas-correlation-python/
-        https://numpy.org/doc/stable/reference/generated/numpy.corrcoef.html
-        """
-        assert(type(ref) == GridEnf)
-
-        self.aborted = False
-
-        def step_enum(steps, progressCallback):
-            for n in range(steps):
-                if n % 1000 == 0:
-                    progressCallback(n)
-                yield n
-
-        def canceled():
-            if self.aborted:
-                raise StopIteration
-
-        print(f"Start Pearson correlation computation: {datetime.datetime.now()} ...")
-        ref_enf = ref.getENF()
-        timestamp = ref.getTimestamp()
-        print(f"Len ref_enf: {len(ref_enf)}, len(enf): {len(self.enf)}")
-
-        # If a smoothed version is available then use it
-        if self.enfs is not None:
-            enf = self.enfs
-        else:
-            enf = self.enf
-
-        n_steps = len(ref_enf) - len(enf) + 1
-        try:
-            corr = [np.corrcoef(ref_enf[step:step+len(enf)], enf)[0][1]
-                    for step in step_enum(n_steps, progressCallback)
-                    if not canceled()]
-        except StopIteration:
-            print("Cancelled...")
-        if self.aborted:
-            return None, None, None
-        else:
-            max_index = np.argmax(corr)
-            print(f"End Pearson correlation computation {datetime.datetime.now()} ...")
-            return timestamp + max_index, corr[max_index], corr
-
-
-    def matchEuclidianDist(self, ref, progressCallback):
-        """Given a reference clip with ENF values find the best fit with the
-        own ENF values.
-
-        :param ref: The ENF series of the grid
-        :param progressCallback: Function to be called once in a while
-        to signal the progress of the processing.
-        :returns: The index into the reference series of thebets match; the
-        correlation at that index, an array of correlations for all possible
-        indices.
-
-        The method computes the Euclidian distance between the ENF values in
-        the clip and the grid.
-
-        See: https://www.geeksforgeeks.org/python-distance-between-collections-of-inputs/
-
-        The methond constantly monitors self.aborted and stops if its value is True.
-        """
-
-        # Apparently the StopIteration exception can only be raised from within
-        # the condition function. Unfortunate, because two functions are needed
-        # in the list comprehension.
-        self.aborted = False
-
-        def step_enum(steps, progressCallback):
-            for n in range(steps):
-                if n % 1000 == 0:
-                    progressCallback(n)
-                yield n
-
-        def canceled():
-            if self.aborted:
-                raise StopIteration
-
-        assert(type(ref) == GridEnf)
-
-        print(f"Start Euclidian correlation computation: {datetime.datetime.now()} ...")
-        ref_enf = ref.getENF()
-        timestamp = ref.getTimestamp()
-
-        # If a smoothed version is available then use it
-        if self.enfs is not None:
-            enf = self.enfs
-        else:
-            enf = self.enf
-
-        n_steps = len(ref_enf) - len(enf) + 1
-        progressCallback(0)
-        try:
-            mse = [((ref_enf[step:step+len(enf)] - enf) ** 2).mean()
-                    for step in step_enum(n_steps, progressCallback)
-                    if not canceled()]
-            #corr = [spatial.distance.cdist([ref_enf[step:step+len(enf)], enf],
-            #                               [ref_enf[step:step+len(enf)], enf],
-            #                               'sqeuclidean')[0][1] for step in step_enum(n_steps, progressCallback)
-            #                                if not canceled()]
-        except StopIteration:
-            print("...canceled")
-        if self.aborted:
-            return None, None, None
-        else:
-            # Normalise
-            corr = mse / np.sqrt(len(mse))
-            min_index = np.argmin(corr)
-            print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
-            progressCallback(n_steps)
-            return timestamp + min_index, corr[min_index], corr
-
-
-    def matchConv(self, ref, progressCallback):
-        """Compute correlation between clip ENF and grid ENF.
-
-        :param ref: A GridEnf object representing the grid frequencies.
-        :param progressCallback: Function to be called to signal progress.
-        Used for a progress bar as feedback to the user.
-        """
-        print("matchConv")
-        grid_freqs = ref.getENF()
-        # Get the region of interest
-        if self.enfs is not None:
-            enf = self.enfs
-        else:
-            enf = self.enf
-        if self.region is not None:
-            t0 = self.region[0]
-            t1 = self.region[1]
-            enf = enf[t0:t1]
-        else:
-            t0 = 0
-        n_steps = len(grid_freqs) - len(enf) + 1
-        timestamp = ref.getTimestamp()
-        progressCallback(0)
-        xcorr = signal.correlate(
-            grid_freqs-np.mean(grid_freqs),
-            enf-np.mean(enf),
-            mode='same')
-        max_index = np.argmax(xcorr)
-        ref_normalization = pd.Series(grid_freqs).rolling(self.clip_len_s,
-                                                          center=True).std()
-        signal_normalization = np.std(enf)
-        xcorr_norm = xcorr/ref_normalization/signal_normalization/self.clip_len_s
-        progressCallback(n_steps)
-        return timestamp + t0 + max_index - self.clip_len_s//2, xcorr_norm[max_index], xcorr_norm
-
-
     def outlierSmoother(self, threshold, win):
         """Find outliers in the ENF values replace them with the median of
         neighbouring values.
@@ -553,17 +620,16 @@ class ClipEnf(Enf):
             else:
                 x_corr[i] = np.median(np.append(self.enf[i-win:i], self.enf[i+1:i+win+1]))
         self.enfs = x_corr
-        
-        
+
+
     def plotENFsmoothed(self):
         if self.enfs is not None:
-            timestamps = list(range(self._timestamp), self._timestamp + len(self.enfs))
+            timestamps = list(range(self._timestamp, self._timestamp + len(self.enfs)))
             self.ENFscurve.setData(timestamps, self.enfs)
         else:
             self.ENFscurve.setData([], [])
-            
-            
+
+
     def plotSpectrum(self):
         assert self.fft_ampl is not None and self.fft_freq is not None
         self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)
-
