@@ -54,7 +54,7 @@ class HumView(QMainWindow):
     regionAreaBrush = pg.mkBrush(color=(240, 240, 240, 128))
     regionAreaHoverBrush = pg.mkBrush(color=(200, 200, 200, 128))
     spectrumCurveColour = pg.mkPen(color=(255, 0, 0))
-    ENFvalueColour = pg.mkPen(color=(255, 128, 0))
+    ENFvalueColour = pg.mkPen(color=(150, 0, 0))
     ENFsmoothedValueColour = pg.mkPen(color=(153, 153, 0))
     GridCurveColour = pg.mkPen(color=(0, 150, 70))
     correlationCurveColour = pg.mkPen(color=(255, 0, 255))
@@ -460,6 +460,8 @@ class HumView(QMainWindow):
             m = self.sp_Outlier_Threshold.value()
             window = self.sp_window.value()
             self.clip.outlierSmoother(m, window)
+        else:
+            self.clip.clearSmoothedENF()
         self.clip.makeFFT()
         if self.grid is not None:
             gridtimestamp = self.grid.getTimestamp()

@@ -632,6 +632,8 @@ class ClipEnf(Enf):
                 x_corr[i] = np.median(np.append(self.enf[i-win:i], self.enf[i+1:i+win+1]))
         self.enfs = x_corr
 
+    def clearSmoothedENF(self):
+        self.enfs = None
 
     def plotENFsmoothed(self):
         if self.enfs is not None:
