@@ -222,11 +222,22 @@ class Enf():
     def plotENF(self):
         """Plot the cureve of ENF values.
 
-        This works for ENF values in both clips and grid data.
+        This works for ENF values in both clips and grid data. Note that ENFcurve.setData
+        cumulates so the existing data have to be removed.
         """
         assert self.ENFcurve is not None
-        timestamps = range(self._timestamp, self._timestamp + len(self.enf))
+        self.ENFcurve.setData([], [])
+        timestamps = list(range(self._timestamp, self._timestamp + len(self.enf)))
         self.ENFcurve.setData(timestamps, self.enf)
+
+
+    def getTimestamp(self):
+        """Return the timestamp of the object."""
+        return self._timestamp
+
+
+    def setTimestamp(self, timestamp):
+        self._timestamp = timestamp
 
 
 class GridEnf(Enf):
@@ -458,18 +469,9 @@ class GridEnf(Enf):
         """
         print("__matchConv")
         grid_freqs = self.enf
+
         # Get the region of interest
         enf = clip._getENF()
-        #if self.enfs is not None:
-        #    enf = self.enfs
-        #else:
-        #    enf = self.enf
-        #if self.region is not None:
-        #    t0 = self.region[0]
-        #    t1 = self.region[1]
-        #    enf = enf[t0:t1]
-        #else:
-        #    t0 = 0
         n_steps = len(grid_freqs) - len(enf) + 1
         timestamp = self._timestamp
         progressCallback(0)
@@ -496,10 +498,6 @@ class GridEnf(Enf):
         #return timestamp + max_index - self.clip_len_s//2, xcorr_norm[max_index], xcorr_norm
 
 
-    def getTimestamp(self):
-        return self._timestamp
-
-
     def getMatchTimestamp(self):
         return self.t_match
 
@@ -513,6 +511,7 @@ class GridEnf(Enf):
 
 
     def plotCorrelation(self):
+        self.correlationCurve.setData([], [])
         timestamps = list(range(self._timestamp, self._timestamp + len(self.corr)))
         self.correlationCurve.setData(timestamps, self.corr)
 
@@ -565,10 +564,6 @@ class ClipEnf(Enf):
         return self.data is not None
 
 
-    def setTimestamp(self, timestamp):
-        self._timestamp = timestamp
-
-
     def setENFRegion(self, region: tuple):
         """Set a region of interest for the ENF values. Only ENF values inside
         this region will be used during the matching process.
@@ -587,14 +582,6 @@ class ClipEnf(Enf):
         rgn = (self.region[0] + self._timestamp,
                self.region[1] + self._timestamp)
         return rgn
-
-
-    def getFFT_unused(self):
-        """Get the spectrum.
-
-        Returns FFT frequencies and amplitudes.
-        """
-        return self.fft_freq, self.fft_ampl
 
 
     def getDuration(self):
@@ -632,17 +619,20 @@ class ClipEnf(Enf):
                 x_corr[i] = np.median(np.append(self.enf[i-win:i], self.enf[i+1:i+win+1]))
         self.enfs = x_corr
 
+
     def clearSmoothedENF(self):
         self.enfs = None
 
+
     def plotENFsmoothed(self):
+        self.ENFscurve.setData([], [])
         if self.enfs is not None:
             timestamps = list(range(self._timestamp, self._timestamp + len(self.enfs)))
             self.ENFscurve.setData(timestamps, self.enfs)
-        else:
-            self.ENFscurve.setData([], [])
 
 
     def plotSpectrum(self):
+
         assert self.fft_ampl is not None and self.fft_freq is not None
+        self.spectrumCurve.setData([])
         self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)

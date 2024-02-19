@@ -20,33 +20,16 @@ from griddata import GridDataAccessFactory
 from enf import ClipEnf, GridEnf
 
 
-class GetGridDataWorker(QObject):
-    finished = pyqtSignal()
-    progress = pyqtSignal(str, int)
-
-    def __init__(self, grid, location, year, month, n_months,
-                 progressCallback):
-        super().__init__()
-        self.grid = grid
-        self.location = location
-        self.year = year
-        self.month = month
-        self.n_months = n_months
-        self.progressCallback = progressCallback
-
-    @pyqtSlot()
-    def run(self):
-        print("GetGridDataWorker.run()")
-        self.grid.loadGridEnf(self.location, self.year, self.month, self.n_months,
-                              self.on_progress)
-        self.finished.emit()
-
-    def on_progress(self, hint, progr):
-        self.progress.emit(hint, progr)
-
-
 class HumView(QMainWindow):
-    """ Display ENF analysis and result."""
+    """ Display ENF analysis and result display.
+
+        | Action            | x range   |                                 |
+        |-------------------+-----------+---------------------------------|
+        | Load clip clicked | unchanged |                                 |
+        | Analyse clicked   | Clip data |                                 |
+        | Load grid clicked | Grid data |                                 |
+        | Match clicked     | Clip data | Clip has already been relocated |
+    """
 
     # Colour definitions
     # Order is R, G, B, alpha
@@ -60,7 +43,7 @@ class HumView(QMainWindow):
     correlationCurveColour = pg.mkPen(color=(255, 0, 255))
 
     class GetGridDataWorker(QObject):
-        """Worker task to load ENF data from either the internet or -- if already cacehd --
+        """Worker task to load ENF data from either the internet or -- if already cached --
         from a databse. Is intended to run in QThread and communicates via signals."""
 
         finished = pyqtSignal()
@@ -68,6 +51,19 @@ class HumView(QMainWindow):
 
         def __init__(self, grid, location, year, month, n_months,
                      progressCallback):
+            """Initialise the worker object.
+
+            :param grid: GridEnf object for wich to fetch the frequency data.
+            :param location: Grid location
+            :param year: The year for whitch the data should be fetched.
+            :param month: The first month.
+            :param n_months: The number of consecutive months.
+            :param progressCallback: A function to report progress to the
+            caller.
+
+            Just stores all parameters in instance variables for use in the
+            'run' method.
+            """
             super().__init__()
             self.grid = grid
             self.location = location
@@ -78,6 +74,8 @@ class HumView(QMainWindow):
 
         @pyqtSlot()
         def run(self):
+            """Delegate the task to the 'grid' object. When finished send
+            a 'finished' signal."""
             print("GetGridDataWorker.run()")
             self.grid.loadGridEnf(self.location, self.year, self.month, self.n_months,
                                   self.__on_progress)
@@ -151,7 +149,7 @@ class HumView(QMainWindow):
         # Create a plot widget for the various ENF curves and add it to the
         # tab
         self.enfPlot = pg.PlotWidget(axisItems={'bottom': pg.DateAxisItem()})
-        self.enfPlot.setLabel("left", "Frequency (Hz)")
+        self.enfPlot.setLabel("left", "Frequency (mHz)")
         self.enfPlot.setLabel("bottom", "Date and time")
         self.enfPlot.addLegend()
         self.enfPlot.setBackground("w")
@@ -345,8 +343,6 @@ class HumView(QMainWindow):
 
     def __editSettings(self):
         """Menu item; pops up a 'setting' dialog."""
-        # TODO: Sort out settings. Probbly call 'newSettings' method of all
-        # embbeded objects.
         dlg = SettingsDialog(self.settings)
         if dlg.exec():
             print("Success!")
@@ -431,7 +427,6 @@ class HumView(QMainWindow):
                 if self.enfAudioCurveRegion:
                     self.enfPlot.removeItem(self.enfAudioCurveRegion)
                     self.enfAudioCurveRegion = None
-                #self.__plotAudioRec()
             else:
                 dlg = QMessageBox(self)
                 dlg.setWindowTitle("Data Error")
@@ -468,7 +463,8 @@ class HumView(QMainWindow):
             self.clip.setTimestamp(gridtimestamp)
 
         # Set range of the x axis to the clip length
-        self.enfPlot.setXRange(0, self.clip.clip_len_s)
+        t = self.clip.getTimestamp()
+        self.enfPlot.setXRange(t, t + self.clip.clip_len_s)
 
         # Plot curves
         self.clip.plotENF()
@@ -517,11 +513,6 @@ class HumView(QMainWindow):
             self.grid.makeEnf(int(self.b_nominal_freq.currentText()),
                             float(self.b_band_size.value()/1000),
                             int(self.b_harmonic.value()))
-            # As the 'test' does not run in a separate thread do postprocessing
-            # here (see __onLoadGridHistoryDone())
-            #if self.clip is not None:
-            #    self.__plotAudioRec()
-            #self.__plotGridHistory()
             self.grid.plotENF()
             self.tabs.setCurrentIndex(1)
             self.unsetCursor()
@@ -547,11 +538,10 @@ class HumView(QMainWindow):
                 self.__ldGridProgDlg.setWindowModality(Qt.WindowModal)
                 self.__ldGridProgDlg.forceShow()
                 self.__ldGridProgDlg.setValue(0)
-                #self.__ldGridProgDlg.canceled.connect(self.cancelGridHistoryLoading)
 
                 # Move to thread
                 self.__loadGridEnfThread = QThread()
-                self.__loadGridEnfWorker = GetGridDataWorker(self.grid,
+                self.__loadGridEnfWorker = HumView.GetGridDataWorker(self.grid,
                                                            location, year, month, n_months,
                                                            self.__gridHistoryLoadingProgress)
                 self.__loadGridEnfWorker.moveToThread(self.__loadGridEnfThread)
@@ -568,7 +558,16 @@ class HumView(QMainWindow):
 
     @pyqtSlot()
     def __onLoadGridHistoryDone(self):
-        """Called when __loadGridEnfWorker() finishes."""
+        """Called when __loadGridEnfWorker() finishes.
+
+        It sets the timestamp of the clip (which was previously 0)
+        to the timestamp of the grid data. This way, the clip curve appears
+        to be at the grid curve.
+
+        If there no clip yet then the displayed timespan is the timespan
+        of the grid data; otherwise set the timespan to the one of the
+        clip.
+        """
         print("__onLoadGridHistoryDone")
 
         # Terminate thread and wait
@@ -579,26 +578,32 @@ class HumView(QMainWindow):
         if self.grid.enf is not None:
             self.setCursor(Qt.WaitCursor)
             if self.clip is not None:
-                #rgn = self.enfAudioCurveRegion.getRegion()
-                #self.clip.setENFRegion(rgn)
+                # Set the clip's timestamp to the grid data timestamp.
                 self.clip.setTimestamp(self.grid.getTimestamp())
+
+                # Get the clip region and assign it to the grid
+                # region.
                 rgn = self.clip.getENFRegion()
-
-                #  --- Apparentlich a problem with __setRegion ---
-                # replace with deleteItem(), createRegion()
-                #self.enfAudioCurveRegion.__setRegion((float(rgn[0]), float(rgn[1])))
                 self.__setRegion(rgn)
-                # --- End fix ---
 
+                # Get the region from the curve - just for diagnostics
                 rgn = self.enfAudioCurveRegion.getRegion()
                 print(f"__onLoadGridHistoryDone: enfAudioCurveRegion={rgn}")
-            self.clip.plotENF()
-            self.clip.plotENFsCurve()
-            self.clip.plotCorrelation()
+
+                # Set x-axis range so that the clip is recognisable
+                t = self.clip.getTimestamp()
+                self.enfPlot.setXRange(t, t + self.clip.getDuration())
+
+                # Plot all clip-related curves
+                print(f"Clip: {self.clip.getTimestamp()}, grid: {self.grid.getTimestamp()}")
+                self.clip.plotENF()
+                self.clip.plotENFsmoothed()
+                self.clip.plotSpectrum()
             self.grid.plotENF()
             self.unsetCursor()
             self.tabs.setCurrentIndex(1)
         else:
+            # Loading grid data failed
             dlg = QMessageBox(self)
             dlg.setWindowTitle("Information")
             dlg.setIcon(QMessageBox.Information)
@@ -853,7 +858,7 @@ class Settings():
 
 
 class HumController(QApplication):
-    """ Orchestrate view and clip. """
+    """ Create a HumView object and show it. """
     def __init__(self, argv):
         super(HumController, self).__init__(argv)
         self.view = HumView()
