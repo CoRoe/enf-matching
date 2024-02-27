@@ -3,6 +3,8 @@
 #
 
 import sys
+import json
+import os
 from PyQt5.QtCore import QDir, Qt, QUrl
 import pyqtgraph as pg
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
@@ -19,6 +21,7 @@ from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QIcon
 
 from griddata import GridDataAccessFactory
+from enf import VideoEnf
 
 
 class FlimmerView(QMainWindow):
@@ -40,13 +43,23 @@ class FlimmerView(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.mediaPlayer = QMediaPlayer(None, QMediaPlayer.VideoSurface)
+        self.clip = None
+        self.grid = None
+        self.settings = Settings()
+        self.databasePath = self.settings.databasePath()
 
-        #self.videoWidgets()
+        self.enfAudioCurve = None     # ENF series of loaded audio file
+        self.enfAudioCurveSmothed = None
+        self.enfAudioCurveRegion = None
+        self.clipSpectrumCurve = None # Fourier transform of loaded audio file
+        self.enfGridCurve = None      # ENF series of grid
+        self.correlationCurve = None  # Correlation of ENF series of audio
+                                      # clip and grid
+
         self.__createWidgets()
 
 
-    def videoWidgets(self):
+    def videoWidgets_unused(self):
         """Create a layout with the video-related widgets.
 
         :returns layout: a QLayout with the widgets added.
@@ -119,13 +132,13 @@ class FlimmerView(QMainWindow):
 
         # Define layouts
         main_layout = QHBoxLayout()
-        left_layout = self.videoWidgets()
-        main_layout.addLayout(left_layout)
+        #left_layout = self.videoWidgets()
+        #main_layout.addLayout(left_layout)
         right_layout = QVBoxLayout()
         main_layout.addLayout(right_layout)
-        audio_area = QGridLayout()
+        video_area = QGridLayout()
         audio_group = QGroupBox("Video")
-        audio_group.setLayout(audio_area)
+        audio_group.setLayout(video_area)
         analyse_group = QGroupBox("Analysis")
         analyse_area = QGridLayout()
         analyse_group.setLayout(analyse_area)
@@ -181,24 +194,28 @@ class FlimmerView(QMainWindow):
                                                    pen=FlimmerView.correlationCurveColour)
         self.tabs.addTab(self.correlationPlot, "Correlation")
 
-        # 'audio' area
+        # 'Video' area
         self.b_load = QPushButton("Load")
-        self.b_load.setToolTip("Load a WAV file to analyse.")
+        self.b_load.setToolTip("Load a video file to analyse.")
         self.b_load.clicked.connect(self.__onOpenFileClicked)
-        audio_area.addWidget(self.b_load, 0, 0)
+        video_area.addWidget(self.b_load, 0, 0)
         self.e_fileName = QLineEdit()
         self.e_fileName.setReadOnly(True)
-        self.e_fileName.setToolTip("WAV file that has been loaded.")
-        audio_area.addWidget(self.e_fileName, 0, 1, 1, 3)
-        audio_area.addWidget(QLabel("Sample rate (Hz)"), 1, 0)
-        self.e_sampleRate = QLineEdit()
-        self.e_sampleRate.setReadOnly(True)
-        audio_area.addWidget(self.e_sampleRate, 1, 1)
-        audio_area.addWidget(QLabel("Duration (sec)"), 1, 2)
+        self.e_fileName.setToolTip("Video file that has been loaded.")
+        video_area.addWidget(self.e_fileName, 0, 1, 1, 3)
+        video_area.addWidget(QLabel("Video format"), 1, 0)
+        self.e_videoFormat = QLineEdit()
+        self.e_videoFormat.setReadOnly(True)
+        video_area.addWidget(self.e_videoFormat, 1, 1)
+        video_area.addWidget(QLabel("Frame rate"), 1, 2)
+        self.e_frameRate = QLineEdit()
+        self.e_frameRate.setReadOnly(True)
+        video_area.addWidget(self.e_frameRate, 1, 3)
+        video_area.addWidget(QLabel("Duration (sec)"), 1, 4)
         self.e_duration = QLineEdit()
         self.e_duration.setReadOnly(True)
-        audio_area.addWidget(self.e_duration, 1, 3)
-        audio_area.setColumnStretch(5, 1)
+        video_area.addWidget(self.e_duration, 1, 5)
+        video_area.setColumnStretch(5, 1)
 
         # 'Analyse' area; contains settings to get the ENF values from the
         # recorded audio clip
@@ -303,22 +320,98 @@ class FlimmerView(QMainWindow):
         self.setCentralWidget(widget)
 
 
+    def __setRegion(self, region, movable=True):
+        """Set the region of interest.
+
+        :param region: A tuple specifying start and end of the region of interest.
+        """
+        if self.enfAudioCurveRegion is not None:
+            self.enfPlot.removeItem(self.enfAudioCurveRegion)
+        self.enfAudioCurveRegion = pg.LinearRegionItem(values=region,
+                                                       pen=FlimmerView.regionAreaPen,
+                                                       bounds=region)
+        self.enfAudioCurveRegion.setBrush(FlimmerView.regionAreaBrush)
+        self.enfAudioCurveRegion.setHoverBrush(FlimmerView.regionAreaHoverBrush)
+        self.enfAudioCurveRegion.sigRegionChangeFinished.connect(self.__onRegionChanged)
+        self.enfAudioCurveRegion.setMovable(movable)
+        self.enfPlot.addItem(self.enfAudioCurveRegion)
+
+
+
     #def listPlayerInfo(self):
     #    self.mediaPlayer.hasSupport(mimeType, codecs, flags)
 
 
     def __onOpenFileClicked(self):
-        fileName, _ = QFileDialog.getOpenFileName(self, "Open Movie",
-                QDir.homePath())
+        self.setCursor(Qt.WaitCursor)
 
-        if fileName != '':
-            self.mediaPlayer.setMedia(
-                    QMediaContent(QUrl.fromLocalFile(fileName)))
-            self.playButton.setEnabled(True)
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        fileName, x = QFileDialog.getOpenFileName(self,"Open video file",
+                                                  "*.mp4", "all files (*)",
+                                                  options=options)
+        if fileName and fileName != '':
+            self.clip = VideoEnf(self.enfAudioCurve, self.enfAudioCurveSmothed,
+                                self.clipSpectrumCurve)
+            videoProp = self.clip.getVideoProperties(fileName)
+            if videoProp is not None:
+                self.e_fileName.setText(fileName)
+                self.e_duration.setText(str(self.clip.getDuration()))
+                self.e_frameRate.setText(str(self.clip.getFrameRate()))
+                self.e_videoFormat.setText(self.clip.getVideoFormat())
+                self.clip.loadVideoFile(fileName)
+
+                # Clear all clip-related plots and the region
+                if self.enfAudioCurveRegion:
+                    self.enfPlot.removeItem(self.enfAudioCurveRegion)
+                    self.enfAudioCurveRegion = None
+            else:
+                dlg = QMessageBox(self)
+                dlg.setWindowTitle("Data Error")
+                dlg.setIcon(QMessageBox.Information)
+                dlg.setText(f"Could not handle {fileName}. Maybe it is not a"
+                            " video file.")
+                dlg.exec()
+
+        self.unsetCursor()
+        self.__setButtonStatus()
 
 
     def __onAnalyseClicked(self):
-        pass
+        """ Called when the 'analyse' button is pressed. """
+        # Display wait cursor
+        self.setCursor(Qt.WaitCursor)
+
+        self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
+                           float(self.b_band_size.value()/1000),
+                           int(self.b_harmonic.value()))
+        if self.c_rem_outliers.isChecked():
+            m = self.sp_Outlier_Threshold.value()
+            window = self.sp_window.value()
+            self.clip.outlierSmoother(m, window)
+        else:
+            self.clip.clearSmoothedENF()
+        self.clip.makeFFT()
+        if self.grid is not None:
+            gridtimestamp = self.grid.getTimestamp()
+            self.clip.setTimestamp(gridtimestamp)
+
+        # Set range of the x axis to the clip length
+        t = self.clip.getTimestamp()
+        self.enfPlot.setXRange(t, t + self.clip.clip_len_s)
+
+        # Plot curves
+        self.clip.plotENF()
+        self.clip.plotENFsmoothed()
+        self.clip.plotSpectrum()
+
+        # Display region; initially, it comprises the whole clip
+        rgn = self.clip.getENFRegion()
+        self.__setRegion(rgn)
+
+        self.unsetCursor()
+        self.tabs.setCurrentIndex(1)
+        self.__setButtonStatus()
 
 
     def __onLoadGridHistoryClicked(self):
@@ -329,40 +422,130 @@ class FlimmerView(QMainWindow):
         pass
 
 
-    def play(self):
-        if self.mediaPlayer.state() == QMediaPlayer.PlayingState:
-            self.mediaPlayer.pause()
+    @pyqtSlot()
+    def __onRegionChanged(self):
+        """Called when the user has dragged one of the region boundaries.
+
+        Queries the actual region boundaries from the plot widget and
+        sets the region in the clip.
+        """
+        rgn = self.enfAudioCurveRegion.getRegion()
+        self.clip.setENFRegion(rgn)
+
+
+    def __setButtonStatus(self):
+        """ Enables or disables buttons depending on the clip status."""
+        audioDataLoaded = self.clip is not None and self.clip.fileLoaded()
+        audioEnfLoaded = self.clip is not None and self.clip.ENFavailable()
+        gridEnfLoaded = self.grid is not None and self.grid.ENFavailable()
+
+        self.b_analyse.setEnabled(audioDataLoaded)
+        self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
+
+
+
+class SettingsDialog(QDialog):
+
+    def __init__(self, settings):
+        super().__init__()
+
+        assert(type(settings) == Settings)
+
+        self.settings = settings
+        self.setWindowTitle("Edit Settings")
+
+        QBtn = QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+
+        self.buttonBox = QDialogButtonBox(QBtn)
+        self.buttonBox.accepted.connect(self.save)
+        self.buttonBox.rejected.connect(self.reject)
+
+        top_layout = QVBoxLayout()
+        layout = QGridLayout()
+        top_layout.addLayout(layout)
+        top_layout.addWidget(self.buttonBox)
+        layout.addWidget(QLabel("Database path:"), 0, 0)
+        self.e_databasePath = QLineEdit()
+        layout.addWidget(self.e_databasePath, 0, 1)
+        self.e_databasePath.setToolTip("Path where downlaeded ENF data are stored")
+        self.setLayout(top_layout)
+
+        self.e_databasePath.setText(self.settings.databasePath())
+
+
+    def save(self):
+        self.settings.setDatabasePath(self.e_databasePath.text())
+        self.settings.save()
+        self.accept()
+
+
+class Settings():
+    """ Keep track of settings."""
+
+    template = {"databasepath": "/tmp/hum.sqlite"}
+
+    def __init__(self):
+        """ Initialise the setting.
+
+        Attempt to read the settings from a JSON file. Its path is hard-coded as '~/.hum.json'.
+        If it does not exist or is malformed, default values are used. Internally, the values are
+        stored in a dict.
+        """
+        print("Loading settings ...")
+
+        # File where settings are stored
+        self.settingsPath = os.path.expanduser("~") + "/.hum.json"
+
+        try:
+            with open(self.settingsPath, 'r') as s:
+                self.settings0 = json.load(s)
+                print("... OK")
+        except IOError:
+            print("... Not found")
+            self.settings0 = {}
+        except Exception as e:
+            self.settings0 = {}
+            print(e)
+        self.__setDefaults()
+        self.settings = self.settings0.copy()
+
+
+    def save(self):
+        """ Save the settings to a JSON file.
+
+        The method checks if the settings have actually been modified and
+        if so writes them to a file.
+        """
+        print("Saving settings ...")
+
+        # If values have changed then save the settings
+        if self.settings != self.settings0:
+            print("... not equeal ...")
+            try:
+                with open(self.settingsPath, 'w') as s:
+                    json_object = json.dumps(self.settings, indent=4)
+                    s.write(json_object)
+                    self.settings0 = self.settings.copy()
+                    print("... OK")
+            except IOError as e:
+                print("... Exception:", e)
         else:
-            self.mediaPlayer.play()
-
-    def mediaStateChanged(self, state):
-        if self.mediaPlayer.state() == QMediaPlayer.PlayingState:
-            self.playButton.setIcon(
-                    self.style().standardIcon(QStyle.SP_MediaPause))
-        else:
-            self.playButton.setIcon(
-                    self.style().standardIcon(QStyle.SP_MediaPlay))
+            print("... not changed")
 
 
-    def positionChanged(self, position):
-        self.positionSlider.setValue(position)
+    def __setDefaults(self):
+        for item in Settings.template:
+            if not item in self.settings0:
+                self.settings0[item] = Settings.template[item]
 
 
-    def setPosition(self, position):
-        self.mediaPlayer.setPosition(position)
+    def databasePath(self):
+        """ Get the database path from the settings."""
+        return self.settings["databasepath"]
 
 
-    def durationChanged(self, duration):
-        self.positionSlider.setRange(0, duration)
-
-
-    def handleError(self):
-        self.playButton.setEnabled(False)
-        self.errorLabel.setText("Error: " + self.mediaPlayer.errorString())
-
-
-    def exitCall(self):
-        pass
+    def setDatabasePath(self, path):
+        self.settings['databasepath'] = path
 
 
 class FlimmerApp(QApplication):

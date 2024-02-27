@@ -4,6 +4,8 @@ from scipy import signal, fft
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
+import subprocess
+import json
 from griddata import GridDataAccessFactory
 
 
@@ -636,3 +638,216 @@ class ClipEnf(Enf):
         assert self.fft_ampl is not None and self.fft_freq is not None
         self.spectrumCurve.setData([])
         self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)
+
+
+class VideoEnf(Enf):
+    def __init__(self, ENFcurve, ENFscurve, spectrumCurve):
+        super().__init__(ENFcurve)
+        self.ENFscurve = ENFscurve
+        self.spectrumCurve = spectrumCurve
+
+        # The curves may pre-exist; clear them
+        self.ENFscurve.setData([], [])
+        self.spectrumCurve.setData([], [])
+
+        self.enfs = None
+        self.fft_freq = None
+        self.fft_ampl = None
+        self.data = None
+        self.aborted = False
+        self.region = None
+        self._timestamp = 0
+
+
+    def getVideoProperties(self, filename):
+        # -v quiet -show_streams -show_format -print_format json
+        cmd = ["/usr/bin/ffprobe", '-v', 'quiet', '-show_streams', '-show_format',
+                '-print_format', 'json', filename]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+        output, errors = p.communicate()
+        if p.returncode == 0:
+            #print("Output:", output)
+            p = json.loads(output)
+            for stream in p['streams']:
+                if 'pix_fmt' in stream:
+                    # We know it is a video stream; set some instance variables
+                    self.height = stream['height']
+                    self.width = stream['width']
+                    self.clip_len_s = int(float(stream['duration']))
+                    # Someting like '30/1'
+                    self.frame_rate = int(stream['r_frame_rate'][:-2])
+                    break
+            else:
+                return None
+            return p
+        else:
+            return None
+
+
+    def loadVideoFile(self, filename, scale_factor=4):
+        """Read a video file.
+
+        :param filename: The filename; type can be anything that ffmpeg supports.
+        :param scale_factor:
+        :param hres: Number of pixels per scan line of the original file.
+        :returns luminanceArray: Series of luminance values, averaged over
+        either frames or scan lines. The lenght of the array should be a
+        multiple of frmaes or scan lines, resp.
+
+        The function passes the input file thorugh ffmpeg to convert it
+        to raw grayscale video. One scan line corresponds to one datapoint.
+        Pixel format is yuyv422:
+
+        Y0 U Y1 V
+
+        On exit, the region is set to cover the whole video clip.
+        """
+
+        assert type(scale_factor) == int
+        assert type(self.width) == int
+        frameSize = 2 * self.width // scale_factor * self.height // scale_factor
+
+        # Array containing the average brightness of each scan line
+        clipLuminanceArray = np.empty((0, ), dtype=np.uint)
+
+        cmd = ['/usr/bin/ffmpeg', '-i', filename,
+               '-vf', f'scale=iw/{scale_factor}:-1', '-f', 'rawvideo',
+               '-pix_fmt', 'yuyv422', '-'
+               ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None)
+        while True:
+            # Read an entire image frame
+            YUVframeBuffer = proc.stdout.read(frameSize)
+            if len(YUVframeBuffer) < frameSize:
+                break
+            YUVdataArray = np.frombuffer(YUVframeBuffer, dtype=np.uint8)
+            deinterleavedYUV = [YUVdataArray[idx::2] for idx in range(2)]
+            luminanceArray = deinterleavedYUV[0] * 256
+
+            ar = np.reshape(luminanceArray, (270, 480))
+            m = np.array([np.uint16(np.average(line)) for line in ar])
+            clipLuminanceArray = np.append(clipLuminanceArray, m)
+
+        self.data = clipLuminanceArray
+
+        # Sampling frequency
+        self.fs = self.height / scale_factor * self.frame_rate
+
+        # Region is the entire clip; values are in seconds
+        self.region = (0, self.clip_len_s)
+
+        return clipLuminanceArray
+
+
+    def loadVideoFile_unused(self, filename, scale_factor=4):
+        """Read a video file.
+
+        :param filename: The filename; type can be anything that ffmpeg supports.
+        :param scale_factor:
+        :param hres: Number of pixels per scan line of the original file.
+        :returns luminanceArray: Series of luminance values, averaged over
+        either frames or scan lines. The lenght of the array should be a
+        multiple of frmaes or scan lines, resp.
+
+        The function passes the input file thorugh ffmpeg to convert it
+        to raw grayscale video. One scan line corresponds to one datapoint.
+        Pixel format is yuyv422:
+
+        Y0 U Y1 V
+        """
+
+        assert type(scale_factor) == int
+        assert type(self.width) == int
+
+        # Array containing the average brightness of each scan line
+        clipLuminanceArray = np.empty((0, ), dtype=np.uint)
+
+        cmd = ['/usr/bin/ffmpeg', '-i', filename,
+               '-vf', f'scale=iw/{scale_factor}:-1', '-f', 'rawvideo',
+               '-pix_fmt', 'yuyv422', '-'
+               ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None)
+        while True:
+            scanlineYUV = proc.stdout.read(2 * self.width // scale_factor)
+            if len(scanlineYUV) == 0:
+                break
+            YUVdataArray = np.frombuffer(scanlineYUV, dtype=np.uint8)
+            deinterleavedYUV = [YUVdataArray[idx::2] for idx in range(2)]
+            luminanceArray = deinterleavedYUV[0] * 256
+            averageLum = np.uint16(np.average(luminanceArray))
+            #print(f"Line {len(clipLuminanceArray)}: {YUVdataArray[0:4]}..{YUVdataArray[60:64]}..{YUVdataArray[480:484]}")
+            clipLuminanceArray = np.append(clipLuminanceArray, averageLum)
+
+        self.data = clipLuminanceArray
+        self.fs = self.height / scale_factor * self.frame_rate
+        return clipLuminanceArray
+
+
+    def makeFFT(self):
+        """ Compute the spectrum of the original audio recording.
+
+        :param: self.data: sample data of the audio file
+        :param: self.fs: sample frequency
+        :returns: Tuple (frequencies, amplitudes)
+        """
+        # https://docs.scipy.org/doc/scipy/tutorial/fft.html#d-discrete-fourier-transforms
+        # Result is complex.
+        assert(self.data is not None)
+
+        spectrum = fft.fft(self.data)
+        self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
+        self.fft_ampl = np.abs(spectrum)
+
+        return self.fft_freq, self.fft_ampl
+
+
+    def plotENFsmoothed(self):
+        self.ENFscurve.setData([], [])
+        if self.enfs is not None:
+            timestamps = list(range(self._timestamp, self._timestamp + len(self.enfs)))
+            self.ENFscurve.setData(timestamps, self.enfs)
+
+
+    def plotSpectrum(self):
+
+        assert self.fft_ampl is not None and self.fft_freq is not None
+        self.spectrumCurve.setData([])
+        self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)
+
+
+    def getDuration(self):
+        return self.clip_len_s
+
+
+    def setENFRegion(self, region: tuple):
+        """Set a region of interest for the ENF values. Only ENF values inside
+        this region will be used during the matching process.
+
+        :param region: Tuple (lower limit, upper limit). Both values are
+        timestamps as seen by the plot widget.
+
+        """
+        self.region = (int(region[0]) - self._timestamp,
+                       int(region[1]) - self._timestamp)
+        print("setENFRegion:", self.region)
+
+
+    def getENFRegion(self):
+        """It is an error to query the region before it has been set with setENFRegion()."""
+        rgn = (self.region[0] + self._timestamp,
+               self.region[1] + self._timestamp)
+        return rgn
+
+
+    def getFrameRate(self):
+        return self.frame_rate
+
+    def getVideoFormat(self):
+        return f"{self.width}x{self.height}"
+
+    def fileLoaded(self):
+        return self.data is not None
+
+    def clearSmoothedENF(self):
+        self.enfs = None
