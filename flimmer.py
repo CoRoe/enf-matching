@@ -1,5 +1,4 @@
 #
-# Skeleton for an application for video analysis. Uses Qt video player.
 #
 
 import sys
@@ -14,8 +13,6 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QMenuBar, QAction, QDialog, QMessageBox,
                              QDialogButtonBox, QProgressDialog, QHBoxLayout,
                              QStyle, QSlider, QSizePolicy)
-from PyQt5.QtMultimediaWidgets import QVideoWidget
-from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer
 from PyQt5.Qt import Qt
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QIcon
@@ -25,6 +22,8 @@ from enf import VideoEnf
 
 
 class FlimmerView(QMainWindow):
+    """Handle display and user interaction.
+    """
 
     # Colour definitions
     # Order is R, G, B, alpha
@@ -59,70 +58,165 @@ class FlimmerView(QMainWindow):
         self.__createWidgets()
 
 
-    def videoWidgets_unused(self):
-        """Create a layout with the video-related widgets.
+    def __createVideoGroupWidgets(self):
+        """Create all widgets releated to video file loading and display
+        of video properties.
 
-        :returns layout: a QLayout with the widgets added.
+        :returns video_group: The QGroupBox containing the other widgets.
         """
-        videoWidget = QVideoWidget()
+        video_area = QGridLayout()
+        video_group = QGroupBox("Video")
+        video_group.setLayout(video_area)
 
-        self.playButton = QPushButton()
-        self.playButton.setEnabled(False)
-        self.playButton.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
-        self.playButton.clicked.connect(self.play)
+        # 'Video' area
+        self.b_load = QPushButton("Load")
+        self.b_load.setToolTip("Load a video file to analyse.")
+        self.b_load.clicked.connect(self.__onOpenFileClicked)
+        video_area.addWidget(self.b_load, 0, 0)
+        self.e_fileName = QLineEdit()
+        self.e_fileName.setReadOnly(True)
+        self.e_fileName.setToolTip("Video file that has been loaded.")
+        video_area.addWidget(self.e_fileName, 0, 1, 1, 5)
+        video_area.addWidget(QLabel("Video format"), 1, 0)
+        self.e_videoFormat = QLineEdit()
+        self.e_videoFormat.setReadOnly(True)
+        video_area.addWidget(self.e_videoFormat, 1, 1)
+        video_area.addWidget(QLabel("Frame rate"), 1, 2)
+        self.e_frameRate = QLineEdit()
+        self.e_frameRate.setReadOnly(True)
+        video_area.addWidget(self.e_frameRate, 1, 3)
+        video_area.addWidget(QLabel("Duration (sec)"), 1, 4)
+        self.e_duration = QLineEdit()
+        self.e_duration.setReadOnly(True)
+        video_area.addWidget(self.e_duration, 1, 5)
 
-        self.positionSlider = QSlider(Qt.Horizontal)
-        self.positionSlider.setRange(0, 0)
-        self.positionSlider.sliderMoved.connect(self.setPosition)
+        video_area.setColumnStretch(6, 1)
 
-        self.errorLabel = QLabel()
-        self.errorLabel.setSizePolicy(QSizePolicy.Preferred,
-                QSizePolicy.Maximum)
+        return video_group
 
-        # Create new action
-        openAction = QAction(QIcon('open.png'), '&Open', self)
-        openAction.setShortcut('Ctrl+O')
-        openAction.setStatusTip('Open movie')
-        openAction.triggered.connect(self.__onOpenFileClicked)
 
-        # Create exit action
-        exitAction = QAction(QIcon('exit.png'), '&Exit', self)
-        exitAction.setShortcut('Ctrl+Q')
-        exitAction.setStatusTip('Exit application')
-        exitAction.triggered.connect(self.exitCall)
+    def __createAnalyseGroupWidgets(self):
+        """Create all widgets related to video file analysis.
 
-        # Create menu bar and add action
-        menuBar = self.menuBar()
-        fileMenu = menuBar.addMenu('&File')
-        #fileMenu.addAction(newAction)
-        fileMenu.addAction(openAction)
-        fileMenu.addAction(exitAction)
+        :returns analyse_group: The QGroupBox containing the other widgets.
+        """
+        analyse_group = QGroupBox("Analysis")
+        analyse_area = QGridLayout()
+        analyse_group.setLayout(analyse_area)
 
-        # Create a widget for window contents
-        #wid = QWidget(self)
-        #self.setCentralWidget(wid)
+        analyse_area.addWidget(QLabel("Nominal grid freq"), 0, 1)
+        self.b_nominal_freq = QComboBox()
+        self.b_nominal_freq.addItems(("50", "60"))
+        self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
+                                       " 50 Hz in most countries.")
+        analyse_area.addWidget(self.b_nominal_freq, 0, 2)
+        analyse_area.addWidget(QLabel("Band width"), 0, 3)
+        self.b_band_size = QSpinBox()
+        self.b_band_size.setRange(0, 500)
+        self.b_band_size.setValue(200)
+        self.b_band_size.setMinimumWidth(100)
+        self.b_band_size.setSuffix(" mHz")
+        analyse_area.addWidget(self.b_band_size, 0, 4)
+        analyse_area.addWidget(QLabel("Harmonic"), 0, 5)
+        self.b_harmonic = QSpinBox()
+        self.b_harmonic.setRange(1, 10)
+        self.b_harmonic.setValue(2)
+        analyse_area.addWidget(self.b_harmonic, 0, 6)
+        self.c_rem_outliers = QCheckBox("Remove outliers")
+        analyse_area.addWidget(self.c_rem_outliers, 1, 0)
+        analyse_area.addWidget(QLabel("Threshold"), 1, 1)
+        self.sp_Outlier_Threshold = QDoubleSpinBox(self)
+        self.sp_Outlier_Threshold.setValue(3)
+        self.sp_Outlier_Threshold.setToolTip("Factor defining which ENF values shall be considered invalid outliers")
+        analyse_area.addWidget(self.sp_Outlier_Threshold,1, 2)
+        analyse_area.addWidget(QLabel("Window"), 1, 3)
+        self.sp_window = QSpinBox()
+        self.sp_window.setValue(5)
+        analyse_area.addWidget(self.sp_window,1, 4)
 
-        # Create layouts to place inside widget
-        controlLayout = QHBoxLayout()
-        controlLayout.setContentsMargins(0, 0, 0, 0)
-        controlLayout.addWidget(self.playButton)
-        controlLayout.addWidget(self.positionSlider)
+        analyse_area.setColumnStretch(7, 1)
 
-        layout = QVBoxLayout()
-        layout.addWidget(videoWidget, stretch=1)
-        layout.addLayout(controlLayout)
-        layout.addWidget(self.errorLabel)
+        self.b_analyse = QPushButton("Analyse")
+        self.b_analyse.clicked.connect(self.__onAnalyseClicked)
+        analyse_area.addWidget(self.b_analyse, 2, 0)
 
-        # Set widget to contain window contents
-        #wid.setLayout(layout)
+        return analyse_group
 
-        self.mediaPlayer.setVideoOutput(videoWidget)
-        self.mediaPlayer.stateChanged.connect(self.mediaStateChanged)
-        self.mediaPlayer.positionChanged.connect(self.positionChanged)
-        self.mediaPlayer.durationChanged.connect(self.durationChanged)
-        self.mediaPlayer.error.connect(self.handleError)
 
-        return layout
+    def __createGridAreaWidgets(self):
+        """Create all widgets related to loading grid frequencies.
+
+        :returns grid_group: QGroupBox containing the other widgets.
+        """
+        grid_group = QGroupBox("Grid")
+        grid_area = QGridLayout()
+        grid_group.setLayout(grid_area)
+        grid_area.addWidget(QLabel("Location"), 0, 0)
+        self.l_country = QComboBox(self)
+        for l in GridDataAccessFactory.enumLocations():
+            self.l_country.addItem(l)
+        self.l_country.addItem("Test")
+        grid_area.addWidget(self.l_country, 0, 1)
+
+        grid_area.addWidget(QLabel("Year"), 0, 2)
+        self.l_year0 = QComboBox(self)
+        for y in range(2024, 2000 - 1, -1):
+            self.l_year0.addItem(f'{y}')
+        grid_area.addWidget(self.l_year0, 0, 3)
+        grid_area.addWidget(QLabel("Month"), 0, 4)
+        self.l_month0 = QComboBox()
+        self.l_month0.addItems(FlimmerView.month_names)
+        grid_area.addWidget(self.l_month0, 0, 5)
+
+        grid_area.addWidget(QLabel("Year"), 1, 2)
+        self.l_year1 = QComboBox(self)
+        for y in range(2024, 2000 - 1, -1):
+            self.l_year1.addItem(f'{y}')
+        grid_area.addWidget(self.l_year1, 1, 3)
+        grid_area.addWidget(QLabel("Month"), 1, 4)
+        self.l_month1 = QComboBox()
+        self.l_month1.addItems(FlimmerView.month_names)
+        grid_area.addWidget(self.l_month1, 1, 5)
+
+        self.b_loadGridHistory = QPushButton("Load")
+        grid_area.addWidget(self.b_loadGridHistory, 2, 0)
+        self.b_loadGridHistory.clicked.connect(self.__onLoadGridHistoryClicked)
+        grid_area.setColumnStretch(6, 1)
+
+        return grid_group
+
+
+    def __createResultAreaWidgets(self):
+        """Create the widgets releated to displaying the analysis result.
+
+        :returns result_group: QGroupBox containing the other widgets.
+        """
+        result_group = QGroupBox("Result")
+        result_area = QGridLayout()
+        result_group.setLayout(result_area)
+
+        self.b_match = QPushButton("Match")
+        self.b_match.clicked.connect(self.__onMatchClicked)
+        result_area.addWidget(self.b_match, 0, 0)
+        self.cb_algo = QComboBox()
+        self.cb_algo.addItems(('Convolution', 'Euclidian', 'Pearson'))
+        result_area.addWidget(self.cb_algo, 0, 1)
+        result_area.addWidget(QLabel("Offset (sec)"), 1, 0)
+        self.e_offset = QLineEdit()
+        self.e_offset.setReadOnly(True)
+        result_area.addWidget(self.e_offset, 1, 1)
+        result_area.addWidget(QLabel("Date / time"), 1, 2)
+        self.e_date = QLineEdit()
+        self.e_date.setReadOnly(True)
+        result_area.addWidget(self.e_date, 1, 3)
+        result_area.addWidget(QLabel("Quality"), 1, 4)
+        self.e_quality = QLineEdit()
+        self.e_quality.setReadOnly(True)
+        result_area.addWidget(self.e_quality, 1, 5)
+
+        result_area.setColumnStretch(6, 1)
+
+        return result_group
 
 
     def __createWidgets(self):
@@ -131,23 +225,9 @@ class FlimmerView(QMainWindow):
         self.setWindowTitle("Flimmer")
 
         # Define layouts
-        main_layout = QHBoxLayout()
-        #left_layout = self.videoWidgets()
-        #main_layout.addLayout(left_layout)
-        right_layout = QVBoxLayout()
-        main_layout.addLayout(right_layout)
-        video_area = QGridLayout()
-        audio_group = QGroupBox("Video")
-        audio_group.setLayout(video_area)
-        analyse_group = QGroupBox("Analysis")
-        analyse_area = QGridLayout()
-        analyse_group.setLayout(analyse_area)
-        grid_group = QGroupBox("Grid")
-        grid_area = QGridLayout()
-        grid_group.setLayout(grid_area)
-        result_group = QGroupBox("Result")
-        result_area = QGridLayout()
-        result_group.setLayout(result_area)
+        main_layout = QVBoxLayout()
+        #right_layout = QVBoxLayout()
+        #main_layout.addLayout(right_layout)
 
         self.tabs = QTabWidget()
 
@@ -194,125 +274,12 @@ class FlimmerView(QMainWindow):
                                                    pen=FlimmerView.correlationCurveColour)
         self.tabs.addTab(self.correlationPlot, "Correlation")
 
-        # 'Video' area
-        self.b_load = QPushButton("Load")
-        self.b_load.setToolTip("Load a video file to analyse.")
-        self.b_load.clicked.connect(self.__onOpenFileClicked)
-        video_area.addWidget(self.b_load, 0, 0)
-        self.e_fileName = QLineEdit()
-        self.e_fileName.setReadOnly(True)
-        self.e_fileName.setToolTip("Video file that has been loaded.")
-        video_area.addWidget(self.e_fileName, 0, 1, 1, 3)
-        video_area.addWidget(QLabel("Video format"), 1, 0)
-        self.e_videoFormat = QLineEdit()
-        self.e_videoFormat.setReadOnly(True)
-        video_area.addWidget(self.e_videoFormat, 1, 1)
-        video_area.addWidget(QLabel("Frame rate"), 1, 2)
-        self.e_frameRate = QLineEdit()
-        self.e_frameRate.setReadOnly(True)
-        video_area.addWidget(self.e_frameRate, 1, 3)
-        video_area.addWidget(QLabel("Duration (sec)"), 1, 4)
-        self.e_duration = QLineEdit()
-        self.e_duration.setReadOnly(True)
-        video_area.addWidget(self.e_duration, 1, 5)
-        video_area.setColumnStretch(5, 1)
-
-        # 'Analyse' area; contains settings to get the ENF values from the
-        # recorded audio clip
-        analyse_area.addWidget(QLabel("Nominal grid freq"), 0, 1)
-        self.b_nominal_freq = QComboBox()
-        self.b_nominal_freq.addItems(("50", "60"))
-        self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
-                                       " 50 Hz in most countries.")
-        analyse_area.addWidget(self.b_nominal_freq, 0, 2)
-        analyse_area.addWidget(QLabel("Band width"), 0, 3)
-        self.b_band_size = QSpinBox()
-        self.b_band_size.setRange(0, 500)
-        self.b_band_size.setValue(200)
-        self.b_band_size.setMinimumWidth(100)
-        self.b_band_size.setSuffix(" mHz")
-        analyse_area.addWidget(self.b_band_size, 0, 4)
-        analyse_area.addWidget(QLabel("Harmonic"), 0, 5)
-        self.b_harmonic = QSpinBox()
-        self.b_harmonic.setRange(1, 10)
-        self.b_harmonic.setValue(2)
-        analyse_area.addWidget(self.b_harmonic, 0, 6)
-        self.c_rem_outliers = QCheckBox("Remove outliers")
-        analyse_area.addWidget(self.c_rem_outliers, 1, 0)
-        analyse_area.addWidget(QLabel("Threshold"), 1, 1)
-        self.sp_Outlier_Threshold = QDoubleSpinBox(self)
-        self.sp_Outlier_Threshold.setValue(3)
-        self.sp_Outlier_Threshold.setToolTip("Factor defining which ENF values shall be considered invalid outliers")
-        analyse_area.addWidget(self.sp_Outlier_Threshold,1, 2)
-        analyse_area.addWidget(QLabel("Window"), 1, 3)
-        self.sp_window = QSpinBox()
-        self.sp_window.setValue(5)
-        analyse_area.addWidget(self.sp_window,1, 4)
-
-        analyse_area.setColumnStretch(7, 1)
-
-        self.b_analyse = QPushButton("Analyse")
-        self.b_analyse.clicked.connect(self.__onAnalyseClicked)
-        analyse_area.addWidget(self.b_analyse, 2, 0)
-
-        # 'Grid' area; settings to download the ENF values from the internet
-        grid_area.addWidget(QLabel("Location"), 0, 0)
-        self.l_country = QComboBox(self)
-        for l in GridDataAccessFactory.enumLocations():
-            self.l_country.addItem(l)
-        self.l_country.addItem("Test")
-        grid_area.addWidget(self.l_country, 0, 1)
-
-        grid_area.addWidget(QLabel("Year"), 0, 2)
-        self.l_year0 = QComboBox(self)
-        for y in range(2024, 2000 - 1, -1):
-            self.l_year0.addItem(f'{y}')
-        grid_area.addWidget(self.l_year0, 0, 3)
-        grid_area.addWidget(QLabel("Month"), 0, 4)
-        self.l_month0 = QComboBox()
-        self.l_month0.addItems(FlimmerView.month_names)
-        grid_area.addWidget(self.l_month0, 0, 5)
-
-        grid_area.addWidget(QLabel("Year"), 1, 2)
-        self.l_year1 = QComboBox(self)
-        for y in range(2024, 2000 - 1, -1):
-            self.l_year1.addItem(f'{y}')
-        grid_area.addWidget(self.l_year1, 1, 3)
-        grid_area.addWidget(QLabel("Month"), 1, 4)
-        self.l_month1 = QComboBox()
-        self.l_month1.addItems(FlimmerView.month_names)
-        grid_area.addWidget(self.l_month1, 1, 5)
-
-        self.b_loadGridHistory = QPushButton("Load")
-        grid_area.addWidget(self.b_loadGridHistory, 2, 0)
-        self.b_loadGridHistory.clicked.connect(self.__onLoadGridHistoryClicked)
-        grid_area.setColumnStretch(6, 1)
-
-        self.b_match = QPushButton("Match")
-        self.b_match.clicked.connect(self.__onMatchClicked)
-        result_area.addWidget(self.b_match, 0, 0)
-        self.cb_algo = QComboBox()
-        self.cb_algo.addItems(('Convolution', 'Euclidian', 'Pearson'))
-        result_area.addWidget(self.cb_algo, 0, 1)
-        result_area.addWidget(QLabel("Offset (sec)"), 1, 0)
-        self.e_offset = QLineEdit()
-        self.e_offset.setReadOnly(True)
-        result_area.addWidget(self.e_offset, 1, 1)
-        result_area.addWidget(QLabel("Date / time"), 1, 2)
-        self.e_date = QLineEdit()
-        self.e_date.setReadOnly(True)
-        result_area.addWidget(self.e_date, 1, 3)
-        result_area.addWidget(QLabel("Quality"), 1, 4)
-        self.e_quality = QLineEdit()
-        self.e_quality.setReadOnly(True)
-        result_area.addWidget(self.e_quality, 1, 5)
-
         # Overall layout
-        right_layout.addWidget(self.tabs, 1)
-        right_layout.addWidget(audio_group)
-        right_layout.addWidget(analyse_group)
-        right_layout.addWidget(grid_group)
-        right_layout.addWidget(result_group)
+        main_layout.addWidget(self.tabs, 1)
+        main_layout.addWidget(self.__createVideoGroupWidgets())
+        main_layout.addWidget(self.__createAnalyseGroupWidgets())
+        main_layout.addWidget(self.__createGridAreaWidgets())
+        main_layout.addWidget(self.__createResultAreaWidgets())
 
         #self.__setButtonStatus()
 
@@ -368,7 +335,7 @@ class FlimmerView(QMainWindow):
             else:
                 dlg = QMessageBox(self)
                 dlg.setWindowTitle("Data Error")
-                dlg.setIcon(QMessageBox.Information)
+                dlg.setIcon(QMessageBox.Warning)
                 dlg.setText(f"Could not handle {fileName}. Maybe it is not a"
                             " video file.")
                 dlg.exec()
@@ -382,9 +349,18 @@ class FlimmerView(QMainWindow):
         # Display wait cursor
         self.setCursor(Qt.WaitCursor)
 
-        self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
-                           float(self.b_band_size.value()/1000),
-                           int(self.b_harmonic.value()))
+        try:
+            self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
+                               float(self.b_band_size.value()/1000),
+                               int(self.b_harmonic.value()))
+        except ValueError:
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Data Error")
+            dlg.setIcon(QMessageBox.Warning)
+            dlg.setText("Could not extract ENF information from file. It is probably too short.\n"
+                        "You can still have a look at the spectrum.")
+            dlg.exec()
+
         if self.c_rem_outliers.isChecked():
             m = self.sp_Outlier_Threshold.value()
             window = self.sp_window.value()
@@ -400,9 +376,11 @@ class FlimmerView(QMainWindow):
         t = self.clip.getTimestamp()
         self.enfPlot.setXRange(t, t + self.clip.clip_len_s)
 
-        # Plot curves
-        self.clip.plotENF()
-        self.clip.plotENFsmoothed()
+        # Plot curves. In some cases it is not possible to extract the
+        # the ENF values, hence the check.
+        if self.clip.enf is not None:
+            self.clip.plotENF()
+            self.clip.plotENFsmoothed()
         self.clip.plotSpectrum()
 
         # Display region; initially, it comprises the whole clip
