@@ -90,6 +90,12 @@ class FlimmerView(QMainWindow):
         self.e_duration.setReadOnly(True)
         video_area.addWidget(self.e_duration, 1, 5)
 
+        video_area.addWidget(QLabel("Sensor read-out time"), 2, 0)
+        self.sp_readOutTime = QSpinBox()
+        self.sp_readOutTime.setRange(0, 50)
+        self.sp_readOutTime.setValue(30)
+        video_area.addWidget(self.sp_readOutTime, 2, 1)
+
         video_area.setColumnStretch(6, 1)
 
         return video_group
@@ -104,6 +110,7 @@ class FlimmerView(QMainWindow):
         analyse_area = QGridLayout()
         analyse_group.setLayout(analyse_area)
 
+        # Widgets in the first row
         analyse_area.addWidget(QLabel("Nominal grid freq"), 0, 1)
         self.b_nominal_freq = QComboBox()
         self.b_nominal_freq.addItems(("50", "60"))
@@ -117,11 +124,12 @@ class FlimmerView(QMainWindow):
         self.b_band_size.setMinimumWidth(100)
         self.b_band_size.setSuffix(" mHz")
         analyse_area.addWidget(self.b_band_size, 0, 4)
-        analyse_area.addWidget(QLabel("Harmonic"), 0, 5)
-        self.b_harmonic = QSpinBox()
-        self.b_harmonic.setRange(1, 10)
-        self.b_harmonic.setValue(2)
+        analyse_area.addWidget(QLabel("Alias freq"), 0, 5)
+        self.b_harmonic = QComboBox()
+        self.b_harmonic.addItems(("10", "20", "40", "70", "80", "140"))
         analyse_area.addWidget(self.b_harmonic, 0, 6)
+
+        # Widgets in the second row
         self.c_rem_outliers = QCheckBox("Remove outliers")
         analyse_area.addWidget(self.c_rem_outliers, 1, 0)
         analyse_area.addWidget(QLabel("Threshold"), 1, 1)
@@ -304,7 +312,6 @@ class FlimmerView(QMainWindow):
         self.enfPlot.addItem(self.enfAudioCurveRegion)
 
 
-
     #def listPlayerInfo(self):
     #    self.mediaPlayer.hasSupport(mimeType, codecs, flags)
 
@@ -326,7 +333,7 @@ class FlimmerView(QMainWindow):
                 self.e_duration.setText(str(self.clip.getDuration()))
                 self.e_frameRate.setText(str(self.clip.getFrameRate()))
                 self.e_videoFormat.setText(self.clip.getVideoFormat())
-                self.clip.loadVideoFile(fileName)
+                self.clip.loadVideoFile(fileName, self.sp_readOutTime.value())
 
                 # Clear all clip-related plots and the region
                 if self.enfAudioCurveRegion:
@@ -349,17 +356,9 @@ class FlimmerView(QMainWindow):
         # Display wait cursor
         self.setCursor(Qt.WaitCursor)
 
-        try:
-            self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
-                               float(self.b_band_size.value()/1000),
-                               int(self.b_harmonic.value()))
-        except ValueError:
-            dlg = QMessageBox(self)
-            dlg.setWindowTitle("Data Error")
-            dlg.setIcon(QMessageBox.Warning)
-            dlg.setText("Could not extract ENF information from file. It is probably too short.\n"
-                        "You can still have a look at the spectrum.")
-            dlg.exec()
+        self.clip.makeEnf(int(self.b_harmonic.currentText()),
+                          float(self.b_band_size.value()/1000),
+                          1)
 
         if self.c_rem_outliers.isChecked():
             m = self.sp_Outlier_Threshold.value()
