@@ -34,12 +34,17 @@ def stft(data, fs):
     :param data: list of signal sample amplitudes
     :param fs: the sample rate
     :returns: tuple of (array of sample frequencies, array of segment times, STFT of input).
-    This is the same return format as scipy's stft function.
+    This is the same return format as scipy's stft function. Returns None if STFT
+    throws a ValueError exception.
     """
     window_size_seconds = 16
     nperseg = fs * window_size_seconds
     noverlap = fs * (window_size_seconds - 1)
-    f, t, Zxx = signal.stft(data, fs, nperseg=nperseg, noverlap=noverlap)
+    # STFT will throw an except if the data series is too short
+    try:
+        f, t, Zxx = signal.stft(data, fs, nperseg=nperseg, noverlap=noverlap)
+    except ValueError:
+        f, t, Zxx = None, None, None
     return f, t, Zxx
 
 
@@ -51,14 +56,16 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
     :param nominal_freq: the nominal ENF (in Hz) to look near
     :param freq_band_size: the size of the band around the nominal value in which to look for the ENF
     :param harmonic_n: the harmonic number to look for
-    :returns: a list of ENF values, one per second
+    :returns: a list of ENF values, one per second or None on error
     """
+    print(f"enf_series: sample freq={fs}, grid freq={nominal_freq}, freq band={freq_band_size}, harmonic={harmonic_n}")
     # downsampled_data, downsampled_fs = downsample(data, fs, 300)
     downsampled_data, downsampled_fs = (data, fs)
 
     locut = harmonic_n * (nominal_freq - freq_band_size)
     hicut = harmonic_n * (nominal_freq + freq_band_size)
 
+    print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={downsampled_fs}, order=10")
     filtered_data = butter_bandpass_filter(downsampled_data, locut, hicut,
                                            downsampled_fs, order=10)
 
@@ -77,15 +84,16 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
 
         return interpolated
 
-    bin_size = f[1] - f[0]
+    if Zxx is not None:
+        bin_size = f[1] - f[0]
 
-    max_freqs = []
-    for spectrum in np.abs(np.transpose(Zxx)):
-        max_amp = np.amax(spectrum)
-        max_freq_idx = np.where(spectrum == max_amp)[0][0]
+        max_freqs = []
+        for spectrum in np.abs(np.transpose(Zxx)):
+            max_amp = np.amax(spectrum)
+            max_freq_idx = np.where(spectrum == max_amp)[0][0]
 
-        max_freq = quadratic_interpolation(spectrum, max_freq_idx, bin_size)
-        max_freqs.append(max_freq)
+            max_freq = quadratic_interpolation(spectrum, max_freq_idx, bin_size)
+            max_freqs.append(max_freq)
 
     return {
         'downsample': {
@@ -100,7 +108,7 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
             'tablew': t,
             'Zxx': Zxx,
         },
-        'enf': [f/float(harmonic_n) for f in max_freqs],
+        'enf': [f/float(harmonic_n) for f in max_freqs] if Zxx is not None else None,
     }
 
 
@@ -216,9 +224,12 @@ class Enf():
         # self.stft = enf_output['stft']
 
         # ENF are the ENF values
-        enf = [int(e * 1000) for e in enf_output['enf']]
-        self.enf = np.array(enf)
-        assert type(self.enf) == np.ndarray
+        if enf_output['enf'] is not None:
+            enf = [int(e * 1000) for e in enf_output['enf']]
+            self.enf = np.array(enf)
+        else:
+            self.enf = None
+        assert self.enf is None or type(self.enf) == np.ndarray
 
 
     def plotENF(self):
@@ -685,7 +696,70 @@ class VideoEnf(Enf):
             return None
 
 
-    def loadVideoFile(self, filename, scale_factor=4):
+    def loadVideoFile(self, filename, readout_time):
+        """Read a video file.
+
+        :param filename: The filename; type can be anything that ffmpeg supports.
+        :param readout_time: Time [ms] it takes to read out all scan lines from
+        the image sensor. This is a camera parameter.
+        """
+
+        # Frame size in bytes
+        frameSize = self.width * self.height
+
+        # Intended sampling frequency; may become a bit higher because of
+        # the added interpolated ('extra') scan lines.
+        fs = 600
+
+        # Number of scan lines to be interpolated
+        extra_scan_lines = self.height * (1 - readout_time/1000 * self.frame_rate)
+
+        # To have an effective sample frequency of say 600 Hz at a frame rate of 30 fps,
+        # each frame must be split into 600 / 30 = 20 slices.
+        # TODO: Better computation
+        n_slices = int(fs / self.frame_rate)
+
+        # Number of scan lines per slice
+        slice_size = int(self.height / n_slices)
+
+        # Number of slices with interpolated scan lines
+        extra_slices = round(extra_scan_lines / slice_size)
+
+        # Array containing the average brightness of each s
+        clipLuminanceArray = np.empty((0, ), dtype=np.uint16)
+
+        cmd = ['/usr/bin/ffmpeg', '-i', filename,
+               '-vf', 'extractplanes=y', '-f', 'rawvideo',
+                '-'
+                ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None)
+        while True:
+            # Read an entire image frame. Frame format is y800: 1 luminance byte per pixel.
+            YframeBuffer = proc.stdout.read(frameSize)
+            if len(YframeBuffer) < frameSize:
+                break
+            # Convert to array for easier handling
+            YArray = np.frombuffer(YframeBuffer, dtype=np.uint8)
+            for s in range(0, frameSize, slice_size * self.width):
+                #print(s, s + slice_size * self.width)
+                avg = np.uint16(np.average(YArray[s:s + slice_size * self.width]) * 256)
+                clipLuminanceArray = np.append(clipLuminanceArray, avg)
+
+            # For each of the 'extra' (interpolated scan lines) add the average
+            # of the last 'real' scan line:
+            for s in range(n_slices):
+                np.append(clipLuminanceArray, avg)
+
+        self.data = clipLuminanceArray
+        self.fs = round(fs * (n_slices + extra_slices) / n_slices)
+
+        # Region is the entire clip; values are in seconds
+        self.region = (0, self.clip_len_s)
+
+        return clipLuminanceArray
+
+
+    def loadVideoFile1_unused(self, filename, scale_factor):
         """Read a video file.
 
         :param filename: The filename; type can be anything that ffmpeg supports.
@@ -725,7 +799,7 @@ class VideoEnf(Enf):
             deinterleavedYUV = [YUVdataArray[idx::2] for idx in range(2)]
             luminanceArray = deinterleavedYUV[0] * 256
 
-            ar = np.reshape(luminanceArray, (270, 480))
+            ar = np.reshape(luminanceArray, (self.height // scale_factor, self.width // scale_factor))
             m = np.array([np.uint16(np.average(line)) for line in ar])
             clipLuminanceArray = np.append(clipLuminanceArray, m)
 
