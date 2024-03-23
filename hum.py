@@ -3,12 +3,29 @@
 # https://www.pythonguis.com/tutorials/plotting-pyqtgraph/'
 
 import pyqtgraph as pg
-from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
-                             QVBoxLayout, QLineEdit, QFileDialog, QLabel,
-                             QPushButton, QGroupBox, QGridLayout, QCheckBox,
-                             QComboBox, QSpinBox, QTabWidget, QDoubleSpinBox,
-                             QMenuBar, QAction, QDialog, QMessageBox,
-                             QDialogButtonBox, QProgressDialog)
+from PyQt5.QtWidgets import (
+    QWidget,
+    QMainWindow,
+    QApplication,
+    QVBoxLayout,
+    QLineEdit,
+    QFileDialog,
+    QLabel,
+    QPushButton,
+    QGroupBox,
+    QGridLayout,
+    QCheckBox,
+    QComboBox,
+    QSpinBox,
+    QTabWidget,
+    QDoubleSpinBox,
+    QMenuBar,
+    QAction,
+    QDialog,
+    QMessageBox,
+    QDialogButtonBox,
+    QProgressDialog,
+)
 from PyQt5.Qt import Qt
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
@@ -21,14 +38,14 @@ from enf import ClipEnf, GridEnf
 
 
 class HumView(QMainWindow):
-    """ Display ENF analysis and result display.
+    """Display ENF analysis and result display.
 
-        | Action            | x range   |                                 |
-        |-------------------+-----------+---------------------------------|
-        | Load clip clicked | unchanged |                                 |
-        | Analyse clicked   | Clip data |                                 |
-        | Load grid clicked | Grid data |                                 |
-        | Match clicked     | Clip data | Clip has already been relocated |
+    | Action            | x range   |                                 |
+    |-------------------+-----------+---------------------------------|
+    | Load clip clicked | unchanged |                                 |
+    | Analyse clicked   | Clip data |                                 |
+    | Load grid clicked | Grid data |                                 |
+    | Match clicked     | Clip data | Clip has already been relocated |
     """
 
     # Colour definitions
@@ -49,8 +66,7 @@ class HumView(QMainWindow):
         finished = pyqtSignal()
         progress = pyqtSignal(str, int)
 
-        def __init__(self, grid, location, year, month, n_months,
-                     progressCallback):
+        def __init__(self, grid, location, year, month, n_months, progressCallback):
             """Initialise the worker object.
 
             :param grid: GridEnf object for wich to fetch the frequency data.
@@ -77,8 +93,9 @@ class HumView(QMainWindow):
             """Delegate the task to the 'grid' object. When finished send
             a 'finished' signal."""
             print("GetGridDataWorker.run()")
-            self.grid.loadGridEnf(self.location, self.year, self.month, self.n_months,
-                                  self.__on_progress)
+            self.grid.loadGridEnf(
+                self.location, self.year, self.month, self.n_months, self.__on_progress
+            )
             self.finished.emit()
 
         def __on_progress(self, hint, progr):
@@ -86,9 +103,20 @@ class HumView(QMainWindow):
             loadGridEnf() method."""
             self.progress.emit(hint, progr)
 
-
-    month_names = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
+    month_names = (
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    )
 
     def __init__(self):
         """Initialize variables and create widgets and menu."""
@@ -98,17 +126,16 @@ class HumView(QMainWindow):
         self.settings = Settings()
         self.databasePath = self.settings.databasePath()
 
-        self.enfAudioCurve = None     # ENF series of loaded audio file
+        self.enfAudioCurve = None  # ENF series of loaded audio file
         self.enfAudioCurveSmothed = None
         self.enfAudioCurveRegion = None
-        self.clipSpectrumCurve = None # Fourier transform of loaded audio file
-        self.enfGridCurve = None      # ENF series of grid
+        self.clipSpectrumCurve = None  # Fourier transform of loaded audio file
+        self.enfGridCurve = None  # ENF series of grid
         self.correlationCurve = None  # Correlation of ENF series of audio
-                                      # clip and grid
+        # clip and grid
 
         self.__createWidgets()
         self.__createMenu()
-
 
     def __createWidgets(self):
         """Create widgets including curves and legends for the plot widgets."""
@@ -141,38 +168,47 @@ class HumView(QMainWindow):
         self.clipSpectrumPlot.setBackground("w")
         self.clipSpectrumPlot.showGrid(x=True, y=True)
         self.clipSpectrumPlot.setXRange(0, 1000)
-        self.clipSpectrumPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        self.clipSpectrumCurve = self.clipSpectrumPlot.plot(name="WAV file spectrum",
-                                           pen=HumView.spectrumCurveColour)
+        self.clipSpectrumPlot.plotItem.setMouseEnabled(
+            y=False
+        )  # Only allow zoom in X-axis
+        self.clipSpectrumCurve = self.clipSpectrumPlot.plot(
+            name="WAV file spectrum", pen=HumView.spectrumCurveColour
+        )
         self.tabs.addTab(self.clipSpectrumPlot, "Clip Spectrum")
 
         # Create a plot widget for the various ENF curves and add it to the
         # tab
-        self.enfPlot = pg.PlotWidget(axisItems={'bottom': pg.DateAxisItem()})
+        self.enfPlot = pg.PlotWidget(axisItems={"bottom": pg.DateAxisItem()})
         self.enfPlot.setLabel("left", "Frequency (mHz)")
         self.enfPlot.setLabel("bottom", "Date and time")
         self.enfPlot.addLegend()
         self.enfPlot.setBackground("w")
         self.enfPlot.showGrid(x=True, y=True)
-        self.enfPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        self.enfAudioCurve = self.enfPlot.plot(name="Clip ENF values",
-                                               pen=HumView.ENFvalueColour)
-        self.enfAudioCurveSmothed = self.enfPlot.plot(name="Smoothed clio ENF values",
-                                               pen=HumView.ENFsmoothedValueColour)
-        self.enfGridCurve = self.enfPlot.plot(name="Grid frequency history",
-                                               pen=HumView.GridCurveColour)
+        self.enfPlot.plotItem.setMouseEnabled(y=False)  # Only allow zoom in X-axis
+        self.enfAudioCurve = self.enfPlot.plot(
+            name="Clip ENF values", pen=HumView.ENFvalueColour
+        )
+        self.enfAudioCurveSmothed = self.enfPlot.plot(
+            name="Smoothed clio ENF values", pen=HumView.ENFsmoothedValueColour
+        )
+        self.enfGridCurve = self.enfPlot.plot(
+            name="Grid frequency history", pen=HumView.GridCurveColour
+        )
         self.tabs.addTab(self.enfPlot, "ENF Series")
 
         # Plots the correlation versus time offset
-        self.correlationPlot = pg.PlotWidget(axisItems={'bottom': pg.DateAxisItem()})
+        self.correlationPlot = pg.PlotWidget(axisItems={"bottom": pg.DateAxisItem()})
         self.correlationPlot.setLabel("left", "correlation")
         self.correlationPlot.setLabel("bottom", "Date / time")
         self.correlationPlot.addLegend()
         self.correlationPlot.setBackground("w")
         self.correlationPlot.showGrid(x=True, y=True)
-        self.correlationPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        self.correlationCurve = self.correlationPlot.plot(name="Correlation",
-                                                   pen=HumView.correlationCurveColour)
+        self.correlationPlot.plotItem.setMouseEnabled(
+            y=False
+        )  # Only allow zoom in X-axis
+        self.correlationCurve = self.correlationPlot.plot(
+            name="Correlation", pen=HumView.correlationCurveColour
+        )
         self.tabs.addTab(self.correlationPlot, "Correlation")
 
         main_layout.addWidget(self.tabs)
@@ -207,8 +243,10 @@ class HumView(QMainWindow):
         analyse_area.addWidget(QLabel("Nominal grid freq"), 0, 1)
         self.b_nominal_freq = QComboBox()
         self.b_nominal_freq.addItems(("50", "60"))
-        self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
-                                       " 50 Hz in most countries.")
+        self.b_nominal_freq.setToolTip(
+            "The nominal frequency of the power grid at the place of the recording;"
+            " 50 Hz in most countries."
+        )
         analyse_area.addWidget(self.b_nominal_freq, 0, 2)
         analyse_area.addWidget(QLabel("Band width"), 0, 3)
         self.b_band_size = QSpinBox()
@@ -227,12 +265,14 @@ class HumView(QMainWindow):
         analyse_area.addWidget(QLabel("Threshold"), 1, 1)
         self.sp_Outlier_Threshold = QDoubleSpinBox(self)
         self.sp_Outlier_Threshold.setValue(3)
-        self.sp_Outlier_Threshold.setToolTip("Factor defining which ENF values shall be considered invalid outliers")
-        analyse_area.addWidget(self.sp_Outlier_Threshold,1, 2)
+        self.sp_Outlier_Threshold.setToolTip(
+            "Factor defining which ENF values shall be considered invalid outliers"
+        )
+        analyse_area.addWidget(self.sp_Outlier_Threshold, 1, 2)
         analyse_area.addWidget(QLabel("Window"), 1, 3)
         self.sp_window = QSpinBox()
         self.sp_window.setValue(5)
-        analyse_area.addWidget(self.sp_window,1, 4)
+        analyse_area.addWidget(self.sp_window, 1, 4)
 
         analyse_area.setColumnStretch(7, 1)
 
@@ -251,7 +291,7 @@ class HumView(QMainWindow):
         grid_area.addWidget(QLabel("Year"), 0, 2)
         self.l_year0 = QComboBox(self)
         for y in range(2024, 2000 - 1, -1):
-            self.l_year0.addItem(f'{y}')
+            self.l_year0.addItem(f"{y}")
         grid_area.addWidget(self.l_year0, 0, 3)
         grid_area.addWidget(QLabel("Month"), 0, 4)
         self.l_month0 = QComboBox()
@@ -261,7 +301,7 @@ class HumView(QMainWindow):
         grid_area.addWidget(QLabel("Year"), 1, 2)
         self.l_year1 = QComboBox(self)
         for y in range(2024, 2000 - 1, -1):
-            self.l_year1.addItem(f'{y}')
+            self.l_year1.addItem(f"{y}")
         grid_area.addWidget(self.l_year1, 1, 3)
         grid_area.addWidget(QLabel("Month"), 1, 4)
         self.l_month1 = QComboBox()
@@ -277,7 +317,7 @@ class HumView(QMainWindow):
         self.b_match.clicked.connect(self.__onMatchClicked)
         result_area.addWidget(self.b_match, 0, 0)
         self.cb_algo = QComboBox()
-        self.cb_algo.addItems(('Convolution', 'Euclidian', 'Pearson'))
+        self.cb_algo.addItems(("Convolution", "Euclidian", "Pearson"))
         result_area.addWidget(self.cb_algo, 0, 1)
         result_area.addWidget(QLabel("Offset (sec)"), 1, 0)
         self.e_offset = QLineEdit()
@@ -296,7 +336,6 @@ class HumView(QMainWindow):
 
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
-
 
     def __createMenu(self):
         """Create a menu."""
@@ -322,7 +361,6 @@ class HumView(QMainWindow):
         editSettingsAction.triggered.connect(self.__editSettings)
         editMenu.addAction(editSettingsAction)
 
-
     def __setRegion(self, region, movable=True):
         """Set the region of interest.
 
@@ -330,16 +368,14 @@ class HumView(QMainWindow):
         """
         if self.enfAudioCurveRegion is not None:
             self.enfPlot.removeItem(self.enfAudioCurveRegion)
-        self.enfAudioCurveRegion = pg.LinearRegionItem(values=region,
-                                                       pen=HumView.regionAreaPen,
-                                                       bounds=region)
+        self.enfAudioCurveRegion = pg.LinearRegionItem(
+            values=region, pen=HumView.regionAreaPen, bounds=region
+        )
         self.enfAudioCurveRegion.setBrush(HumView.regionAreaBrush)
         self.enfAudioCurveRegion.setHoverBrush(HumView.regionAreaHoverBrush)
         self.enfAudioCurveRegion.sigRegionChangeFinished.connect(self.__onRegionChanged)
         self.enfAudioCurveRegion.setMovable(movable)
         self.enfPlot.addItem(self.enfAudioCurveRegion)
-
-
 
     def __editSettings(self):
         """Menu item; pops up a 'setting' dialog."""
@@ -348,7 +384,6 @@ class HumView(QMainWindow):
             print("Success!")
         else:
             print("Cancel!")
-
 
     def __checkDateRange(self):
         """Check if 'to' date is later than 'from' date and computes the
@@ -363,9 +398,10 @@ class HumView(QMainWindow):
         year1 = int(self.l_year1.currentText())
         month1 = self.l_month1.currentIndex()
         n_months = (year1 * 12 + month1) - (year0 * 12 + month0) + 1
-        print(f"Get grid frequencies from {year0}-{month0+1:02} to {year1}-{month1+1:02}, {n_months} months")
+        print(
+            f"Get grid frequencies from {year0}-{month0+1:02} to {year1}-{month1+1:02}, {n_months} months"
+        )
         return year0, month0 + 1, n_months
-
 
     def __showEnfSources(self):
         self.setCursor(Qt.WaitCursor)
@@ -376,9 +412,8 @@ class HumView(QMainWindow):
             print("Cancel!")
         self.unsetCursor()
 
-
     def __setButtonStatus(self):
-        """ Enables or disables buttons depending on the clip status."""
+        """Enables or disables buttons depending on the clip status."""
         audioDataLoaded = self.clip is not None and self.clip.fileLoaded()
         audioEnfLoaded = self.clip is not None and self.clip.ENFavailable()
         gridEnfLoaded = self.grid is not None and self.grid.ENFavailable()
@@ -386,23 +421,32 @@ class HumView(QMainWindow):
         self.b_analyse.setEnabled(audioDataLoaded)
         self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
 
-
     @classmethod
     def __convertToWavFile(cls, fn, tmpfn):
-        """ Convert a multimedia file to a WAV file.
+        """Convert a multimedia file to a WAV file.
 
         :param fn: The input file name
         :param tmp fn: Temporary output file in WAV format.
         """
-        cmd = ["/usr/bin/ffmpeg", "-i", fn, "-ar", "4000",  "-ac", "1", "-f",
-               "wav", tmpfn]
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True)
+        cmd = [
+            "/usr/bin/ffmpeg",
+            "-i",
+            fn,
+            "-ar",
+            "4000",
+            "-ac",
+            "1",
+            "-f",
+            "wav",
+            tmpfn,
+        ]
+        p = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
         output, errors = p.communicate()
         print("Output:", output)
         print("Errors:", errors)
         return p.returncode == 0
-
 
     def __onOpenFileClicked(self):
         """Button to open a multimedia file clicked."""
@@ -410,12 +454,13 @@ class HumView(QMainWindow):
 
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
-        fileName, x = QFileDialog.getOpenFileName(self,"Open audio or video file",
-                                                  "", "all files (*)",
-                                                  options=options)
-        if fileName and fileName != '':
-            self.clip = ClipEnf(self.enfAudioCurve, self.enfAudioCurveSmothed,
-                                self.clipSpectrumCurve)
+        fileName, x = QFileDialog.getOpenFileName(
+            self, "Open audio or video file", "", "all files (*)", options=options
+        )
+        if fileName and fileName != "":
+            self.clip = ClipEnf(
+                self.enfAudioCurve, self.enfAudioCurveSmothed, self.clipSpectrumCurve
+            )
             tmpfn = f"/tmp/hum-tmp-{os.getpid()}.wav"
             if self.__convertToWavFile(fileName, tmpfn):
                 self.clip.loadWaveFile(tmpfn)
@@ -431,8 +476,10 @@ class HumView(QMainWindow):
                 dlg = QMessageBox(self)
                 dlg.setWindowTitle("Data Error")
                 dlg.setIcon(QMessageBox.Information)
-                dlg.setText(f"Could not handle {fileName}. Maybe it is not a"
-                            " video or audio file.")
+                dlg.setText(
+                    f"Could not handle {fileName}. Maybe it is not a"
+                    " video or audio file."
+                )
                 dlg.exec()
             try:
                 os.remove(tmpfn)
@@ -442,15 +489,16 @@ class HumView(QMainWindow):
         self.unsetCursor()
         self.__setButtonStatus()
 
-
     def __onAnalyseClicked(self):
-        """ Called when the 'analyse' button is pressed. """
+        """Called when the 'analyse' button is pressed."""
         # Display wait cursor
         self.setCursor(Qt.WaitCursor)
 
-        self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
-                           float(self.b_band_size.value()/1000),
-                           int(self.b_harmonic.value()))
+        self.clip.makeEnf(
+            int(self.b_nominal_freq.currentText()),
+            float(self.b_band_size.value() / 1000),
+            int(self.b_harmonic.value()),
+        )
         if self.c_rem_outliers.isChecked():
             m = self.sp_Outlier_Threshold.value()
             window = self.sp_window.value()
@@ -479,7 +527,6 @@ class HumView(QMainWindow):
         self.tabs.setCurrentIndex(1)
         self.__setButtonStatus()
 
-
     def __onLoadGridHistoryClicked(self):
         """Gets historical ENF values from an ENF database. Called when the
         'load' button in the 'grid' field is clicked.
@@ -504,15 +551,18 @@ class HumView(QMainWindow):
 
         location = self.l_country.currentText()
         year, month, n_months = self.__checkDateRange()
-        self.grid = GridEnf(self.settings.databasePath(), self.enfGridCurve,
-                            self.correlationCurve)
+        self.grid = GridEnf(
+            self.settings.databasePath(), self.enfGridCurve, self.correlationCurve
+        )
 
-        if location == 'Test':
+        if location == "Test":
             self.setCursor(Qt.WaitCursor)
             self.grid.loadWaveFile("71000_ref.wav")
-            self.grid.makeEnf(int(self.b_nominal_freq.currentText()),
-                            float(self.b_band_size.value()/1000),
-                            int(self.b_harmonic.value()))
+            self.grid.makeEnf(
+                int(self.b_nominal_freq.currentText()),
+                float(self.b_band_size.value() / 1000),
+                int(self.b_harmonic.value()),
+            )
             self.grid.plotENF()
             self.tabs.setCurrentIndex(1)
             self.unsetCursor()
@@ -522,17 +572,18 @@ class HumView(QMainWindow):
                 dlg = QMessageBox(self)
                 dlg.setWindowTitle("Error")
                 dlg.setIcon(QMessageBox.Information)
-                dlg.setText(f"'To' date must be later than 'from' date")
+                dlg.setText("'To' date must be later than 'from' date")
                 dlg.exec()
             elif n_months > 12:
                 dlg = QMessageBox(self)
                 dlg.setWindowTitle("Error")
                 dlg.setIcon(QMessageBox.Information)
-                dlg.setText(f"Limit are 12 months")
+                dlg.setText("Limit are 12 months")
                 dlg.exec()
             else:
-                self.__ldGridProgDlg = QProgressDialog("Loading ENF data from inrternet", "Cancel",
-                                                     0, n_months, self)
+                self.__ldGridProgDlg = QProgressDialog(
+                    "Loading ENF data from inrternet", "Cancel", 0, n_months, self
+                )
                 self.__ldGridProgDlg.setWindowTitle("Getting ENF data")
                 self.__ldGridProgDlg.setCancelButtonText(None)
                 self.__ldGridProgDlg.setWindowModality(Qt.WindowModal)
@@ -541,20 +592,27 @@ class HumView(QMainWindow):
 
                 # Move to thread
                 self.__loadGridEnfThread = QThread()
-                self.__loadGridEnfWorker = HumView.GetGridDataWorker(self.grid,
-                                                           location, year, month, n_months,
-                                                           self.__gridHistoryLoadingProgress)
+                self.__loadGridEnfWorker = HumView.GetGridDataWorker(
+                    self.grid,
+                    location,
+                    year,
+                    month,
+                    n_months,
+                    self.__gridHistoryLoadingProgress,
+                )
                 self.__loadGridEnfWorker.moveToThread(self.__loadGridEnfThread)
 
                 # Connect signale
                 self.__loadGridEnfThread.started.connect(self.__loadGridEnfWorker.run)
-                self.__loadGridEnfThread.finished.connect(self.__loadGridEnfThread.deleteLater)
+                self.__loadGridEnfThread.finished.connect(
+                    self.__loadGridEnfThread.deleteLater
+                )
                 self.__loadGridEnfWorker.finished.connect(self.__loadGridEnfThread.quit)
                 self.__loadGridEnfWorker.finished.connect(self.__onLoadGridHistoryDone)
-                self.__loadGridEnfWorker.progress.connect(self.__gridHistoryLoadingProgress)
+                self.__loadGridEnfWorker.progress.connect(
+                    self.__gridHistoryLoadingProgress
+                )
                 self.__loadGridEnfThread.start()
-
-
 
     @pyqtSlot()
     def __onLoadGridHistoryDone(self):
@@ -595,7 +653,9 @@ class HumView(QMainWindow):
                 self.enfPlot.setXRange(t, t + self.clip.getDuration())
 
                 # Plot all clip-related curves
-                print(f"Clip: {self.clip.getTimestamp()}, grid: {self.grid.getTimestamp()}")
+                print(
+                    f"Clip: {self.clip.getTimestamp()}, grid: {self.grid.getTimestamp()}"
+                )
                 self.clip.plotENF()
                 self.clip.plotENFsmoothed()
                 self.clip.plotSpectrum()
@@ -607,10 +667,9 @@ class HumView(QMainWindow):
             dlg = QMessageBox(self)
             dlg.setWindowTitle("Information")
             dlg.setIcon(QMessageBox.Information)
-            dlg.setText(f"Could not get ENF values")
+            dlg.setText("Could not get ENF values")
             dlg.exec()
         self.__setButtonStatus()
-
 
     @pyqtSlot(str, int)
     def __gridHistoryLoadingProgress(self, hint, progress):
@@ -626,7 +685,6 @@ class HumView(QMainWindow):
         self.__ldGridProgDlg.setValue(progress)
         if self.__ldGridProgDlg.wasCanceled():
             print("Was canceled")
-
 
     def __onMatchClicked(self):
         """Called when the 'match' button is clicked.
@@ -645,14 +703,18 @@ class HumView(QMainWindow):
         now = datetime.datetime.now()
         print(f"{now} ... starting")
         algo = self.cb_algo.currentText()
-        assert algo in ('Convolution', 'Pearson', 'Euclidian')
+        assert algo in ("Convolution", "Pearson", "Euclidian")
 
         ## Progress dialog
         matchingSteps = self.grid.getMatchingSteps(self.clip)
         print(f"__onMatchClicked: {matchingSteps} steps")
-        self.matchingProgDlg = QProgressDialog("Trying to locate audio recording, computing best fit ...",
-                                               "Cancel",
-                                               0, matchingSteps, self)
+        self.matchingProgDlg = QProgressDialog(
+            "Trying to locate audio recording, computing best fit ...",
+            "Cancel",
+            0,
+            matchingSteps,
+            self,
+        )
         self.matchingProgDlg.setWindowTitle("Matching clip")
         self.matchingProgDlg.setWindowModality(Qt.WindowModal)
         self.matchingProgDlg.canceled.connect(self.grid.onCanceled)
@@ -660,7 +722,7 @@ class HumView(QMainWindow):
         #
         corr = self.grid.matchClip(self.clip, algo, self.__matchingProgress)
         if corr:
-            #self.__showMatches(t, q, corr)
+            # self.__showMatches(t, q, corr)
             # Adjust the timestamp of the clip
             t = self.grid.getMatchTimestamp()
             self.clip.setTimestamp(t)
@@ -677,7 +739,7 @@ class HumView(QMainWindow):
 
             # Set text fields
             self.e_offset.setText(str(t))
-            ts = datetime.datetime.fromtimestamp(t).strftime('%Y-%m-%d %H:%M:%S')
+            ts = datetime.datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")
             self.e_date.setText(ts)
             self.e_quality.setText(str(self.grid.getMatchQuality()))
 
@@ -686,13 +748,14 @@ class HumView(QMainWindow):
             print(f"__onMatchClicked: {now} ... done")
             if self.enfAudioCurveRegion is not None:
                 # --- Adjust region of interest ---
-                print(f"__onMatchClicked: region={self.enfAudioCurveRegion.getRegion()}")
+                print(
+                    f"__onMatchClicked: region={self.enfAudioCurveRegion.getRegion()}"
+                )
                 rgn = self.clip.getENFRegion()
                 self.__setRegion(rgn, movable=False)
                 # ----------------------------------
 
         self.__setButtonStatus()
-
 
     @pyqtSlot()
     def __onRegionChanged(self):
@@ -704,11 +767,10 @@ class HumView(QMainWindow):
         rgn = self.enfAudioCurveRegion.getRegion()
         self.clip.setENFRegion(rgn)
 
-
     def __matchingProgress(self, value):
         """Called by matchXxxx method to indicate the matching progress."""
         self.matchingProgDlg.setValue(value)
-        #print(f"__matchingProgress: {value}")
+        # print(f"__matchingProgress: {value}")
 
 
 class ShowEnfSourcesDlg(QDialog):
@@ -737,10 +799,10 @@ class ShowEnfSourcesDlg(QDialog):
         for i in range(len(locations)):
             f = GridDataAccessFactory.getInstance(locations[i], parent.databasePath)
             fromDate, toDate = f.getDateRange()
-            self.table_layout.addWidget(QLabel(locations[i]), i+1, 0)
-            self.table_layout.addWidget(QLabel(fromDate), i+1, 1)
-            #self.table_layout.addWidget(QLineEdit(fromDate), i+1, 1)
-            self.table_layout.addWidget(QLabel(toDate), i+1, 2)
+            self.table_layout.addWidget(QLabel(locations[i]), i + 1, 0)
+            self.table_layout.addWidget(QLabel(fromDate), i + 1, 1)
+            # self.table_layout.addWidget(QLineEdit(fromDate), i+1, 1)
+            self.table_layout.addWidget(QLabel(toDate), i + 1, 2)
 
         self.layout.addLayout(self.table_layout)
 
@@ -758,7 +820,7 @@ class SettingsDialog(QDialog):
     def __init__(self, settings):
         super().__init__()
 
-        assert(type(settings) == Settings)
+        assert type(settings) == Settings
 
         self.settings = settings
         self.setWindowTitle("Edit Settings")
@@ -781,20 +843,19 @@ class SettingsDialog(QDialog):
 
         self.e_databasePath.setText(self.settings.databasePath())
 
-
     def save(self):
         self.settings.setDatabasePath(self.e_databasePath.text())
         self.settings.save()
         self.accept()
 
 
-class Settings():
-    """ Keep track of settings."""
+class Settings:
+    """Keep track of settings."""
 
     template = {"databasepath": "/tmp/hum.sqlite"}
 
     def __init__(self):
-        """ Initialise the setting.
+        """Initialise the setting.
 
         Attempt to read the settings from a JSON file. Its path is hard-coded as '~/.hum.json'.
         If it does not exist or is malformed, default values are used. Internally, the values are
@@ -806,7 +867,7 @@ class Settings():
         self.settingsPath = os.path.expanduser("~") + "/.hum.json"
 
         try:
-            with open(self.settingsPath, 'r') as s:
+            with open(self.settingsPath, "r") as s:
                 self.settings0 = json.load(s)
                 print("... OK")
         except IOError:
@@ -818,9 +879,8 @@ class Settings():
         self.__setDefaults()
         self.settings = self.settings0.copy()
 
-
     def save(self):
-        """ Save the settings to a JSON file.
+        """Save the settings to a JSON file.
 
         The method checks if the settings have actually been modified and
         if so writes them to a file.
@@ -831,7 +891,7 @@ class Settings():
         if self.settings != self.settings0:
             print("... not equeal ...")
             try:
-                with open(self.settingsPath, 'w') as s:
+                with open(self.settingsPath, "w") as s:
                     json_object = json.dumps(self.settings, indent=4)
                     s.write(json_object)
                     self.settings0 = self.settings.copy()
@@ -841,24 +901,22 @@ class Settings():
         else:
             print("... not changed")
 
-
     def __setDefaults(self):
         for item in Settings.template:
-            if not item in self.settings0:
+            if item not in self.settings0:
                 self.settings0[item] = Settings.template[item]
 
-
     def databasePath(self):
-        """ Get the database path from the settings."""
+        """Get the database path from the settings."""
         return self.settings["databasepath"]
 
-
     def setDatabasePath(self, path):
-        self.settings['databasepath'] = path
+        self.settings["databasepath"] = path
 
 
 class HumController(QApplication):
-    """ Create a HumView object and show it. """
+    """Create a HumView object and show it."""
+
     def __init__(self, argv):
         super(HumController, self).__init__(argv)
         self.view = HumView()
@@ -867,7 +925,7 @@ class HumController(QApplication):
         self.view.show()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         app = HumController([])
         app.show()
