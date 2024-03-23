@@ -7,20 +7,17 @@
 
 
 import requests
-import json
 import os
 import h5py
 import argparse
-from numpy import uint16
 
 
-url = 'https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json'
-filename = 'nationalgrideso.hp5'
+url = "https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json"
+filename = "nationalgrideso.hp5"
 
 
 def query_nationalgrideso(year: str, month: str):
-    """
-    """
+    """ """
     timestamp = None
     ## Request execution and response reception
     print(f"Querying {url} ...")
@@ -29,19 +26,24 @@ def query_nationalgrideso(year: str, month: str):
 
     ## Converting the JSON response string to a Python dictionary
     if response.ok:
-        ret_data = response.json()['result']
+        ret_data = response.json()["result"]
         try:
-            csv_resource = next(r for r in ret_data['resources']
-                                if r['path'].endswith(f"/f-{year}-{month}.csv"))
+            csv_resource = next(
+                r
+                for r in ret_data["resources"]
+                if r["path"].endswith(f"/f-{year}-{month}.csv")
+            )
             print(f"Downloading {csv_resource['path']} ...")
-            response = requests.get(csv_resource['path'])
+            response = requests.get(csv_resource["path"])
             print(f"... Status: {response.status_code}")
-            timestamp = response.text.split(os.linesep)[1].split(',')[0]
+            timestamp = response.text.split(os.linesep)[1].split(",")[0]
             timestamp = f"{year}-{month}-01 00:00:00"
             try:
                 print("Extracting frequencies ...")
-                data = [float(row.split(',')[1]) for row in
-                        response.text.split(os.linesep)[1:-1]]
+                data = [
+                    float(row.split(",")[1])
+                    for row in response.text.split(os.linesep)[1:-1]
+                ]
             except Exception as e:
                 print(e)
             return timestamp, data
@@ -56,7 +58,7 @@ def query_nationalgrideso(year: str, month: str):
 
 
 def save_to_file(timestamp: str, datapoints: list):
-    """ Save a dataset from gridradar to a H5 file.
+    """Save a dataset from gridradar to a H5 file.
 
     :param timestamp: Timestamp of the first item of the dataset.
     :param datapoints: The dataset from gridradar. It is the JSON result from a HTTP query converted
@@ -72,7 +74,7 @@ def save_to_file(timestamp: str, datapoints: list):
 
     freq = [int(x * 1000) for x in datapoints]
     try:
-        with h5py.File(filename, 'a') as f:
+        with h5py.File(filename, "a") as f:
             f[timestamp] = freq
             print(f.keys())
     except Exception as e:
@@ -80,13 +82,13 @@ def save_to_file(timestamp: str, datapoints: list):
 
 
 def dump_file():
-    with h5py.File(filename, 'a') as f:
+    with h5py.File(filename, "a") as f:
         print(f.keys())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(prog='Query ENF data from Nation Grid in GB')
+    parser = argparse.ArgumentParser(prog="Query ENF data from Nation Grid in GB")
     args = parser.parse_args()
 
     timestamp, data = query_nationalgrideso("2014", "1")

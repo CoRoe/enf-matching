@@ -10,7 +10,6 @@ import csv
 import numpy as np
 from scipy import signal
 import struct as st
-from _datetime import date
 
 
 #
@@ -23,15 +22,15 @@ from _datetime import date
 #
 
 
-class GridDataAccessFactory():
+class GridDataAccessFactory:
 
-    locations = ['GB', 'FI']
+    locations = ["GB", "FI"]
 
     @classmethod
     def getInstance(cls, location, database_path):
-        if location == 'GB':
+        if location == "GB":
             return GBNationalGrid(database_path)
-        elif location == 'FI':
+        elif location == "FI":
             return Fingrid(database_path)
         else:
             return None
@@ -42,14 +41,13 @@ class GridDataAccessFactory():
             yield l
 
 
-class GridDataAccess():
+class GridDataAccess:
     """Super class"""
 
     def __init__(self, table_name, db_path):
         self.db_path = db_path
         self.table_name = table_name
         self.sql = sq.connect(db_path)
-
 
     def getEnfSeries(self, year, month, n_months, progressCallback):
         """Get a series of ENF values starting at a given year and month.
@@ -64,24 +62,32 @@ class GridDataAccess():
 
         progressCount = 0
 
-        assert(type(year) == int and type(month) == int and month >= 1 and month <= 12 and n_months <= 12)
+        assert (
+            isinstance(year, int)
+            and isinstance(month, int)
+            and month >= 1
+            and month <= 12
+            and n_months <= 12
+        )
         # input datetime
         dt = datetime.datetime(year, month, 1, 0, 0)
         # epoch time
         epoch_time = datetime.datetime(1970, 1, 1)
 
         # subtract Datetime from epoch datetime
-        delta = (dt - epoch_time)
+        delta = dt - epoch_time
         timestamp = int(delta.total_seconds())
         print("Seconds from epoch:", timestamp)
 
         # Accumulated per-month results
         total = np.empty((0,), dtype=np.uint16)
-        for t in range(12*year+(month-1), 12*year+(month-1)+n_months):
-            y = t // 12         # year
-            m = t % 12 + 1      # month
+        for t in range(12 * year + (month - 1), 12 * year + (month - 1) + n_months):
+            y = t // 12  # year
+            m = t % 12 + 1  # month
 
-            progressCallback(f"Querying values for {y}-{m:02} from database...", progressCount)
+            progressCallback(
+                f"Querying values for {y}-{m:02} from database...", progressCount
+            )
 
             # Check if ENF data are already in the database
             data = self.__query_db(y, m)
@@ -93,19 +99,21 @@ class GridDataAccess():
             else:
                 # Get the URL of the actual data file; the call is delegated to the derived,
                 # grid-specific class
-                progressCallback(f"ENF values for {y}-{m:02} not in database; downloading from internet...",
-                                 progressCount)
+                progressCallback(
+                    f"ENF values for {y}-{m:02} not in database; downloading from internet...",
+                    progressCount,
+                )
                 data = None
                 url, daily, dec = self._getDateUrl(y, m)
                 if url:
                     encodedData = self.__downloadFile(url)
                     if encodedData:
-                        suffix = url.split('.')[-1]
-                        if suffix == 'csv':
+                        suffix = url.split(".")[-1]
+                        if suffix == "csv":
                             data = self.__processCsv(encodedData)
-                        elif suffix == '7z':
+                        elif suffix == "7z":
                             data = self.__process7zData(encodedData, daily, dec)
-                        elif suffix == 'zip':
+                        elif suffix == "zip":
                             data = self.__processZipData(encodedData, daily, dec)
                         else:
                             print(f"Unknown file type {suffix}")
@@ -124,7 +132,6 @@ class GridDataAccess():
         print(f"ENF series contains {total.nbytes/1000000} MB")
         return total, timestamp
 
-
     def __downloadFile(self, url):
         print(f"Querying {url}...")
         response = requests.get(url)
@@ -134,15 +141,15 @@ class GridDataAccess():
         else:
             return None
 
-
     def __processCsv(self, csv: bytes):
         print("Extracting frequencies from CSV file ...")
-        assert type(csv) == bytes
+        assert isinstance(csv, bytes)
 
         # Split the input data into rows and use the second item of each row.
         # The first row is supposed to contain the CSV header and is ignored.
-        data = [np.uint16(float(row.split(b',')[1]) * 1000) for row in
-                csv.splitlines()[1:]]
+        data = [
+            np.uint16(float(row.split(b",")[1]) * 1000) for row in csv.splitlines()[1:]
+        ]
         if data is None:
             print("No data")
             return data
@@ -150,7 +157,6 @@ class GridDataAccess():
             print(f"{len(data)} records")
             arr = np.array(data, dtype=np.uint16)
             return arr
-
 
     def __process7zData(self, buffer, daily, decimationFactor):
         """Extract ENF values from a buffer with compressed CSV data.
@@ -162,37 +168,45 @@ class GridDataAccess():
 
         Assumption is that *buffer* contains one CSV file per day."""
         print("__process7zData")
-        assert type(buffer) == bytes
-        assert type(daily) == bool
-        assert decimationFactor is None or type(decimationFactor) == int
+        assert isinstance(buffer, bytes)
+        assert isinstance(daily, bool)
+        assert decimationFactor is None or isinstance(decimationFactor, int)
 
         b = io.BytesIO(buffer)
-        with py7zr.SevenZipFile(b, 'r') as archive:
+        with py7zr.SevenZipFile(b, "r") as archive:
             if daily:
                 fn_pattern = re.compile(r"\d{4}-\d{2}-(\d{2})\.csv$")
                 month_data_list = [None] * 32
 
                 for fname, bio in archive.readall().items():
-                    print(f'{fname}')
+                    print(f"{fname}")
                     m = fn_pattern.search(fname)
                     if m:
                         csv = bio.read()
-                        data = [np.uint16(float(row.split(b',')[1]) * 1000) for row in
-                                   csv.splitlines()[1:]]
+                        data = [
+                            np.uint16(float(row.split(b",")[1]) * 1000)
+                            for row in csv.splitlines()[1:]
+                        ]
                         if decimationFactor:
-                            data = signal.decimate(data, decimationFactor).astype(np.uint16)
+                            data = signal.decimate(data, decimationFactor).astype(
+                                np.uint16
+                            )
                         month_data_list[int(m.group(1))] = data
                 # month_data_list contains ENF data per day
-                monthly_total = np.array([enf_value for per_day_list in
-                                          month_data_list if per_day_list is not None
-                                          for enf_value in per_day_list])
+                monthly_total = np.array(
+                    [
+                        enf_value
+                        for per_day_list in month_data_list
+                        if per_day_list is not None
+                        for enf_value in per_day_list
+                    ]
+                )
                 print(f"Length of monthly_total is {len(monthly_total)}")
                 assert type(monthly_total) == np.ndarray
                 return monthly_total
             else:
                 fn_pattern = re.compile(r"\d{4}-\d{2}\.csv")
                 print("### not daily")
-
 
     def __processZipData(self, buffer, daily, decimationFactor):
         """Extract ENF values from a buffer with compressed CSV data.
@@ -206,9 +220,9 @@ class GridDataAccess():
 
         Assumption is that *buffer* contains one CSV file per day."""
         print("__processZipData")
-        assert type(buffer) == bytes
-        assert type(daily) == bool
-        assert decimationFactor is None or type(decimationFactor) == int
+        assert isinstance(buffer, bytes)
+        assert isinstance(daily, bool)
+        assert decimationFactor is None or isinstance(decimationFactor, int)
 
         with zipfile.ZipFile(io.BytesIO(buffer)) as archive:
             if daily:
@@ -219,15 +233,24 @@ class GridDataAccess():
                     m = fn_pattern.search(fname)
                     if m:
                         csv = archive.read(fname)
-                        data = [np.uint16(float(row.split(b',')[1]) * 1000) for row in
-                                   csv.splitlines()[1:]]
+                        data = [
+                            np.uint16(float(row.split(b",")[1]) * 1000)
+                            for row in csv.splitlines()[1:]
+                        ]
                         if decimationFactor:
-                            data = signal.decimate(data, decimationFactor).astype(np.uint16)
+                            data = signal.decimate(data, decimationFactor).astype(
+                                np.uint16
+                            )
                         month_data_list[int(m.group(1))] = data
                 # month_data_list contains ENF data per day
-                monthly_total = np.array([enf_value for per_day_list in
-                                          month_data_list if per_day_list is not None
-                                          for enf_value in per_day_list])
+                monthly_total = np.array(
+                    [
+                        enf_value
+                        for per_day_list in month_data_list
+                        if per_day_list is not None
+                        for enf_value in per_day_list
+                    ]
+                )
                 print(f"Length of monthly_total is {len(monthly_total)}")
                 assert type(monthly_total) == np.ndarray
                 return monthly_total
@@ -238,12 +261,13 @@ class GridDataAccess():
                     if fn_pattern.search(fname):
                         print("Found", fname, "in ZIP file")
                         csv = archive.read(fname)
-                        data = [np.uint16(float(row.split(b',')[1]) * 1000) for row in
-                                   csv.splitlines()[1:]]
+                        data = [
+                            np.uint16(float(row.split(b",")[1]) * 1000)
+                            for row in csv.splitlines()[1:]
+                        ]
                         arr = np.array(data, dtype=np.uint16)
                         return arr
                 return None
-
 
     def __query_db(self, year, month):
         """Query the database for blob list of ENF at blob given date.
@@ -254,7 +278,9 @@ class GridDataAccess():
         """
         db_key = f"{year:04}-{month:02}"
         print(f"Querying {db_key} from {self.table_name}")
-        res = self.cursor.execute(f"SELECT date, frequencies from {self.table_name} WHERE date IS \"{db_key}\"")
+        res = self.cursor.execute(
+            f'SELECT date, frequencies from {self.table_name} WHERE date IS "{db_key}"'
+        )
         res_list = list(res)
         if len(res_list) == 1:
             print("...OK")
@@ -266,14 +292,15 @@ class GridDataAccess():
             print("... not found")
             return None
 
-
     def __save_to_db(self, dataset, year, month):
         assert type(dataset) == np.ndarray and dataset.dtype == np.uint16
         try:
             db_key = str(f"{year:04}-{month:02}")
             print(f"Inserting array of len {len(dataset)} at {db_key}...")
-            rc = self.cursor.execute(f"INSERT INTO {self.table_name} (date, frequencies) VALUES (?, ?)",
-                                     (db_key, dataset))
+            rc = self.cursor.execute(
+                f"INSERT INTO {self.table_name} (date, frequencies) VALUES (?, ?)",
+                (db_key, dataset),
+            )
             rc = self.sql.commit()
         except sq.Error as e:
             print(e)
@@ -293,20 +320,22 @@ class GridDataAccess():
 # 2015-01-01 00:00:00.200,50.104
 #
 
+
 class Fingrid(GridDataAccess):
-    table_name = 'Fingrid'
+    table_name = "Fingrid"
 
     def __init__(self, db_path):
         super(Fingrid, self).__init__(Fingrid.table_name, db_path)
 
         self.cursor = self.sql.cursor()
-        rc = self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {Fingrid.table_name} (date TEXT PRIMARY KEY, frequencies BLOB)")
+        rc = self.cursor.execute(
+            f"CREATE TABLE IF NOT EXISTS {Fingrid.table_name} (date TEXT PRIMARY KEY, frequencies BLOB)"
+        )
         rc = self.sql.commit()
         pass
 
-
     def getDateRange(self):
-        url ='https://data.fingrid.fi/en/dataset/frequency-historical-data'
+        url = "https://data.fingrid.fi/en/dataset/frequency-historical-data"
         pattern = re.compile(r"(\d+)-(\d+)\.(zip|7z)")
         fromDate = (9999, 9999)
         toDate = (0, 0)
@@ -316,38 +345,40 @@ class Fingrid(GridDataAccess):
         print(f"... Status: {response.status_code}")
         if response.ok:
             ret_data = response.text
-            #print(ret_data)
+            # print(ret_data)
             soup = BeautifulSoup(ret_data, "html.parser")
-            res = soup.find_all('a', class_='resource-url-analytics')
+            res = soup.find_all("a", class_="resource-url-analytics")
             for r in res:
-                #print(r['href'])
-                m = pattern.search(r['href'])
+                # print(r['href'])
+                m = pattern.search(r["href"])
                 if m:
-                    #print(m.group(1), m.group(2))
+                    # print(m.group(1), m.group(2))
                     d = (int(m.group(1)), m.group(2))
-                    if d < fromDate: fromDate = d
-                    if d > toDate: toDate = d
+                    if d < fromDate:
+                        fromDate = d
+                    if d > toDate:
+                        toDate = d
         return f"{fromDate[0]}-{fromDate[1]}", f"{toDate[0]}-{toDate[1]}"
 
-
     def _getDateUrl(self, year: int, month: int):
-        assert type(year) == int and type(month) == int, "should be integers"
-        url ='https://data.fingrid.fi/en/dataset/frequency-historical-data'
+        assert isinstance(year, int) and isinstance(month, int), "should be integers"
+        url = "https://data.fingrid.fi/en/dataset/frequency-historical-data"
         print(f"Querying {url}...")
         response = requests.get(url)
         print(f"... Status: {response.status_code}")
         if response.ok:
             ret_data = response.text
-            #print(ret_data)
+            # print(ret_data)
             soup = BeautifulSoup(ret_data, "html.parser")
-            res = soup.find_all('a', class_='resource-url-analytics')
+            res = soup.find_all("a", class_="resource-url-analytics")
             for r in res:
-                #print(r['href'])
-                url = r['href']
-                if url.endswith(f"{year:4}-{month:02}.zip") or url.endswith(f"{year:4}-{month:02}.7z"):
+                # print(r['href'])
+                url = r["href"]
+                if url.endswith(f"{year:4}-{month:02}.zip") or url.endswith(
+                    f"{year:4}-{month:02}.7z"
+                ):
                     return url, True, 10
         return None, None, None
-
 
     def __processCSV_unused(self, fp):
         """Process a CSV file.
@@ -355,26 +386,26 @@ class Fingrid(GridDataAccess):
         :param fp: The open CSV file.
         :returns: An array of uint16 wth the grid frequencies.
         """
-        csvReader = csv.reader(io.TextIOWrapper(fp, 'utf-8'))
-        a = [np.uint16(float(row[1])*1000) for row in csvReader
-             if row[0] != 'Time']
+        csvReader = csv.reader(io.TextIOWrapper(fp, "utf-8"))
+        a = [np.uint16(float(row[1]) * 1000) for row in csvReader if row[0] != "Time"]
         return a
 
 
 class GBNationalGrid(GridDataAccess):
-    table_name = 'GBNationalGrid'
+    table_name = "GBNationalGrid"
 
     def __init__(self, db_path):
         super(GBNationalGrid, self).__init__(GBNationalGrid.table_name, db_path)
 
         self.cursor = self.sql.cursor()
-        rc = self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {GBNationalGrid.table_name} (date TEXT PRIMARY KEY, frequencies BLOB)")
+        rc = self.cursor.execute(
+            f"CREATE TABLE IF NOT EXISTS {GBNationalGrid.table_name} (date TEXT PRIMARY KEY, frequencies BLOB)"
+        )
         rc = self.sql.commit()
         pass
 
-
     def getDateRange(self):
-        url = 'https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json'
+        url = "https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json"
         pattern = re.compile(r"(\d+)-(\d+)\.csv$")
         fromDate = (9999, 9999)
         toDate = (0, 0)
@@ -386,17 +417,18 @@ class GBNationalGrid(GridDataAccess):
 
         ## Converting the JSON response string to a Python dictionary
         if response.ok:
-            ret_data = response.json()['result']['resources']
+            ret_data = response.json()["result"]["resources"]
             for d in ret_data:
-                m = pattern.search(d['path'])
+                m = pattern.search(d["path"])
                 if m:
-                    #print(m.group(1), m.group(2))
+                    # print(m.group(1), m.group(2))
                     date = (int(m.group(1)), int(m.group(2)))
-                    if date < fromDate: fromDate = date
-                    if date > toDate: toDate = date
+                    if date < fromDate:
+                        fromDate = date
+                    if date > toDate:
+                        toDate = date
 
         return f"{fromDate[0]}-{fromDate[1]:02}", f"{toDate[0]}-{toDate[1]:02}"
-
 
     def _getDateUrl(self, year, month):
         """
@@ -408,7 +440,7 @@ class GBNationalGrid(GridDataAccess):
         :returns np.array with the ENF values or None if not found. ENF values
         are the frequency in mHz.
         """
-        url = 'https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json'
+        url = "https://data.nationalgrideso.com/system/system-frequency-data/datapackage.json"
 
         ## Request execution and response reception
         print(f"Querying {url} ...")
@@ -418,13 +450,14 @@ class GBNationalGrid(GridDataAccess):
         ## Converting the JSON response string to a Python dictionary
         if response.ok:
             url_pattern = re.compile(f"-{year}-{month}.(csv|zip|7z)$")
-            ret_data = response.json()['result']
+            ret_data = response.json()["result"]
             try:
-                #csv_resource = next(r for r in ret_data['resources']
+                # csv_resource = next(r for r in ret_data['resources']
                 #                    if r['path'].endswith(f"-{year}-{month}.csv"))
-                csv_resource = next(r for r in ret_data['resources']
-                                    if url_pattern.search(r['path']))
-                return csv_resource['path'], False, None
+                csv_resource = next(
+                    r for r in ret_data["resources"] if url_pattern.search(r["path"])
+                )
+                return csv_resource["path"], False, None
             except Exception as e:
                 print(e)
                 return None, False, None
@@ -432,13 +465,13 @@ class GBNationalGrid(GridDataAccess):
         return None, False, None
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     db_path = "/tmp/hum.sqlite"
 
-    g = GridDataAccessFactory.getInstance('GB', db_path)
+    g = GridDataAccessFactory.getInstance("GB", db_path)
     g.getEnfSeries(1900, 11)
     g.getEnfSeries(2023, 11)
 
-    g = GridDataAccessFactory.getInstance('FI', db_path)
-    g.getEnfSeries(2015, 1)     # ZIP compressed
-    g.getEnfSeries(2023, 11)    # 7z compressed
+    g = GridDataAccessFactory.getInstance("FI", db_path)
+    g.getEnfSeries(2015, 1)  # ZIP compressed
+    g.getEnfSeries(2023, 11)  # 7z compressed
