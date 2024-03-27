@@ -124,14 +124,16 @@ in https://github.com/CoRoe/enf-matching/blob/main/bin/download-example-files.
 
 The algorithm assumes that the video has been recorded with a rolling shutter
 camera; this should be the case for most smartphone cameras. For details see
-for instance https://www.mdpi.com/2076-3417/13/8/5039.
+for instance
+https://www.mdpi.com/2076-3417/13/8/5039. https://www.photometrics.com/learn/white-papers/rolling-vs-global-shutter
+explains the difference between *rolling* and *global* shutter.
 
 ### Design Details
 
 `flimmer.py` uses `ffmpeg` to transform a compressed video file into a raw
-video file with only the luminance component. The file contains one byte per
-pixel, so -- for instance a video with 1080 x 1920 resolution there are
-2,073,600 bytes per video frame (to be confirmed).
+video file with only the luminance component retained. The file contains one
+byte per pixel, so -- for instance a video with 1080 x 1920 resolution there
+are 2,073,600 bytes per video frame (to be confirmed).
 
 The rolling shutter mechanism introduces alias frequencies because the camera
 frame rate (for instance 30 or 24 frames per second) combines with the grid
@@ -144,17 +146,17 @@ into 20 *slices*, hence the vertical resolution is 20 per frame, and for 30
 fps the the temporal resolution is 600 Hz.
 
 However, the time to expose the sensor scan lines and the transfer to the
-smartphone controller to not take exactly 1/30 second, there is a likely some
+smartphone controller do not take exactly 1/30 second, there is a likely some
 idle time after the transfer (see the Figure 4 in
 https://www.mdpi.com/2076-3417/13/8/5039). Literature indicates that exposure
 and data transfer take around 30 ms per frame, so there is a 3.3 ms idle time
 until the start of the next frame.
 
-To cater for this idle time, `flimmer.py` insert some interpolated frames in
-to luminance inout stream. This happens when the application reads the output
-from `ffmpeg`; hence the size of the idle period has to be known when loading
-the video. Because of the interpolated idle frames, the effective sample rate
-is somewhat higher than 600 Hz.
+To cater for this idle time, `flimmer.py` inserts some interpolated frames in
+to luminance inout stream. This happens (in the current implementation) when
+the application reads the output from `ffmpeg`; hence the size of the idle
+period has to be known when loading the video. Because of the interpolated
+idle frames, the effective sample rate is somewhat higher than 600 Hz.
 
 The UI allows for setting the *readout time*, that is, the time the image
 sensor needs for exposure and transfer to the CPU. It was chosen as parameter
@@ -162,10 +164,25 @@ because it more intuitive than e.g. the idle time.
 
 After `flimmer.py` has converted the video stream into a time series of
 luminance data, processing is similar to the processing of audio
-recording. The difference is that in the audio case, one has to check for the
+recordings. The difference is that in the audio case, one has to check for the
 grid frequency of harmonics thereof while in the video / rolling shutter case
 the frequencies of interest are the alias frequencies grid frequency -- camera
 frame rate.
+
+### Usage
+
+The usage is similar to that of `hum.py`: You work from top to bottom.
+
+The following parameters have to be chosen:
+
+| Parameter            | Meaning                                                                                       |
+|----------------------|-----------------------------------------------------------------------------------------------|
+| Sensor read-out time | Time in milliseconds to transfer pixel data from sensor ro CPU; 30 ms may be a starting point |
+| Grid freq            | Grid frequency in Hz                                                                          |
+| Band width           | Bandwidth of the expected ENF signal                                                          |
+| Alias freq           | Combination of frame frequency and grid frequency where the ENF signal is expected            |
+| Notch filter qual.   | Quality of the notch filter that removes image content that cannot be ENF. 0 disables filter. |
+
 
 ### Status
 
@@ -176,3 +193,6 @@ Very early stage.
 https://robertheaton.com/enf/
 
 https://github.com/bellingcat/open-questions/tree/main/electrical-network-frequency-analysis
+
+Lumenera Corp., Exposure and Strobe Delay vs. Shutter Type Timing:
+https://www.lumenera.com/media/wysiwyg/support/pdf/LA-2104-ExposureVsShutterTypeTimingAppNote.pdf
