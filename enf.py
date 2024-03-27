@@ -791,10 +791,12 @@ class VideoClipEnf(Enf):
 
     def makeEnf(self, grid_freq, nominal_freq: int, freq_band_size, notchf_qual):
 
-        # Apply notch filter that removes any signal components of the frame rate
-        # and its harmonics.
-        print(f"Notch filter: frma rate={self.frame_rate}, sample freq={self.fs}, qual={notchf_qual}")
-        self.data = notch_filter(self.data, self.frame_rate, self.fs, notchf_qual)
+        data = self.data
+        if notchf_qual != 0:
+            # Apply notch filter that removes any signal components of the frame rate
+            # and its harmonics.
+            print(f"Notch filter: frma rate={self.frame_rate}, sample freq={self.fs}, qual={notchf_qual}")
+            data = notch_filter(self.data, self.frame_rate, self.fs, notchf_qual)
 
         locut = nominal_freq - freq_band_size
         hicut = nominal_freq + freq_band_size
@@ -802,7 +804,7 @@ class VideoClipEnf(Enf):
         # Apply a band-pass Butterworth filter that leaves only the frequency range
         # where the ENF is expected:
         print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
-        filtered_data = butter_bandpass_filter(self.data, locut, hicut, self.fs, 10)
+        filtered_data = butter_bandpass_filter(data, locut, hicut, self.fs, 10)
 
         ret = enf_series(filtered_data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
         self.enf = ret['enf']
