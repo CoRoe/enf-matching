@@ -4,21 +4,22 @@
 import sys
 import json
 import os
-from PyQt5.QtCore import QDir, Qt, QUrl
 import pyqtgraph as pg
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QVBoxLayout, QLineEdit, QFileDialog, QLabel,
                              QPushButton, QGroupBox, QGridLayout, QCheckBox,
                              QComboBox, QSpinBox, QTabWidget, QDoubleSpinBox,
                              QMenuBar, QAction, QDialog, QMessageBox,
-                             QDialogButtonBox, QProgressDialog, QHBoxLayout,
-                             QStyle, QSlider, QSizePolicy)
-from PyQt5.Qt import Qt
+                             QDialogButtonBox, QProgressDialog)
+from PyQt5.Qt import Qt, QSettings, QFileInfo
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QIcon
 
+import datetime
+import os
+import subprocess
+import json
 from griddata import GridDataAccessFactory
-from enf import VideoEnf
+from enf import VideoClipEnf, GridEnf
 
 
 class FlimmerView(QMainWindow):
@@ -36,6 +37,51 @@ class FlimmerView(QMainWindow):
     GridCurveColour = pg.mkPen(color=(0, 150, 70))
     correlationCurveColour = pg.mkPen(color=(255, 0, 255))
 
+    class GetGridDataWorker(QObject):
+        """Worker task to load ENF data from either the internet or -- if already cached --
+        from a databse. Is intended to run in QThread and communicates via signals."""
+
+        finished = pyqtSignal()
+        progress = pyqtSignal(str, int)
+
+        def __init__(self, grid, location, year, month, n_months,
+                     progressCallback):
+            """Initialise the worker object.
+
+            :param grid: GridEnf object for wich to fetch the frequency data.
+            :param location: Grid location
+            :param year: The year for whitch the data should be fetched.
+            :param month: The first month.
+            :param n_months: The number of consecutive months.
+            :param progressCallback: A function to report progress to the
+            caller.
+
+            Just stores all parameters in instance variables for use in the
+            'run' method.
+            """
+            super().__init__()
+            self.grid = grid
+            self.location = location
+            self.year = year
+            self.month = month
+            self.n_months = n_months
+            self.progressCallback = progressCallback
+
+        @pyqtSlot()
+        def run(self):
+            """Delegate the task to the 'grid' object. When finished send
+            a 'finished' signal."""
+            print("GetGridDataWorker.run()")
+            self.grid.loadGridEnf(self.location, self.year, self.month, self.n_months,
+                                  self.__on_progress)
+            self.finished.emit()
+
+        def __on_progress(self, hint, progr):
+            """Send a 'progress' signal. The method is called from the underlying
+            loadGridEnf() method."""
+            self.progress.emit(hint, progr)
+
+
     month_names = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
 
@@ -44,8 +90,9 @@ class FlimmerView(QMainWindow):
         super().__init__(parent)
         self.clip = None
         self.grid = None
-        self.settings = Settings()
-        self.databasePath = self.settings.databasePath()
+        # self.settings = Settings()
+        self.__qsettings = QSettings("CRO", "Flimmer")
+        # self.databasePath = self.settings.databasePath()
 
         self.enfAudioCurve = None     # ENF series of loaded audio file
         self.enfAudioCurveSmothed = None
@@ -56,6 +103,41 @@ class FlimmerView(QMainWindow):
                                       # clip and grid
 
         self.__createWidgets()
+        self.__createMenu()
+        self.__loadSettings()
+
+
+    def __loadSettings(self):
+        finfo = QFileInfo(self.__qsettings.fileName())
+
+        if finfo.exists() and finfo.isFile():
+            for w in self.findChildren(QSpinBox):
+                if w.objectName() != "":
+                    value = self.__qsettings.value(w.objectName())
+                    if value is not None:
+                        w.setValue(int(value))
+            for w in self.findChildren(QComboBox):
+                if w.objectName() != "":
+                    value = self.__qsettings.value(w.objectName())
+                    if value is not None:
+                        w.setCurrentText(value)
+
+        # Set default
+        self.databasePath = self.__qsettings.value("paths/database")
+        if self.databasePath is None:
+            self.databasePath = "/tmp/hum.sqlite"
+            self.__qsettings.setValue("paths/database",self.databasePath)
+
+
+    def __saveSettings(self):
+        #print(self.__qsettings.fileName())
+        for w in self.findChildren(QSpinBox):
+            if w.objectName() != "":
+                self.__qsettings.setValue(w.objectName(), w.value())
+        for w in self.findChildren(QComboBox):
+            if w.objectName() != "":
+                self.__qsettings.setValue(w.objectName(), w.currentText())
+
 
 
     def __createVideoGroupWidgets(self):
@@ -91,7 +173,7 @@ class FlimmerView(QMainWindow):
         video_area.addWidget(self.e_duration, 1, 5)
 
         video_area.addWidget(QLabel("Sensor read-out time"), 2, 0)
-        self.sp_readOutTime = QSpinBox()
+        self.sp_readOutTime = QSpinBox(objectName='readout-time')
         self.sp_readOutTime.setRange(0, 50)
         self.sp_readOutTime.setValue(30)
         video_area.addWidget(self.sp_readOutTime, 2, 1)
@@ -111,23 +193,28 @@ class FlimmerView(QMainWindow):
         analyse_group.setLayout(analyse_area)
 
         # Widgets in the first row
-        analyse_area.addWidget(QLabel("Nominal grid freq"), 0, 1)
-        self.b_nominal_freq = QComboBox()
+        analyse_area.addWidget(QLabel("Grid freq"), 0, 1)
+        self.b_nominal_freq = QComboBox(objectName='grid-freq')
         self.b_nominal_freq.addItems(("50", "60"))
         self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
                                        " 50 Hz in most countries.")
         analyse_area.addWidget(self.b_nominal_freq, 0, 2)
         analyse_area.addWidget(QLabel("Band width"), 0, 3)
-        self.b_band_size = QSpinBox()
+        self.b_band_size = QSpinBox(objectName='bandwidth')
         self.b_band_size.setRange(0, 500)
         self.b_band_size.setValue(200)
         self.b_band_size.setMinimumWidth(100)
         self.b_band_size.setSuffix(" mHz")
         analyse_area.addWidget(self.b_band_size, 0, 4)
         analyse_area.addWidget(QLabel("Alias freq"), 0, 5)
-        self.b_harmonic = QComboBox()
-        self.b_harmonic.addItems(("10", "20", "40", "70", "80", "140"))
+        self.b_harmonic = QComboBox(objectName='alias-freq')
+        self.b_harmonic.addItems(("10", "20", "40", "70", "80", "130", "140"))
         analyse_area.addWidget(self.b_harmonic, 0, 6)
+        analyse_area.addWidget(QLabel("Notch filter qual."), 0, 7)
+        self.sp_notchFilterQual = QSpinBox(objectName="notchfilter-quality")
+        self.sp_notchFilterQual.setValue(10)
+        self.sp_notchFilterQual.setToolTip("Quality of notch filter; 0 for no filter")
+        analyse_area.addWidget(self.sp_notchFilterQual, 0, 8)
 
         # Widgets in the second row
         self.c_rem_outliers = QCheckBox("Remove outliers")
@@ -289,10 +376,35 @@ class FlimmerView(QMainWindow):
         main_layout.addWidget(self.__createGridAreaWidgets())
         main_layout.addWidget(self.__createResultAreaWidgets())
 
-        #self.__setButtonStatus()
+        self.__setButtonStatus()
 
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
+
+
+    def __createMenu(self):
+        """Create a menu."""
+        menuBar = QMenuBar(self)
+        self.setMenuBar(menuBar)
+
+        file_menu = menuBar.addMenu("&File")
+
+        b_open = QAction("&Open project", self)
+        b_open.setStatusTip("Open a project")
+        b_save = QAction("&Save project", self)
+        b_save.setStatusTip("Save the project")
+        showEnfSourcesAction = QAction("Show &ENF sources", self)
+        showEnfSourcesAction.triggered.connect(self.__showEnfSources)
+
+        file_menu.addAction(showEnfSourcesAction)
+        file_menu.addAction(b_open)
+        file_menu.addAction(b_save)
+
+        editMenu = menuBar.addMenu("&Edit")
+
+        editSettingsAction = QAction("&Settings", self)
+        editSettingsAction.triggered.connect(self.__editSettings)
+        editMenu.addAction(editSettingsAction)
 
 
     def __setRegion(self, region, movable=True):
@@ -312,11 +424,71 @@ class FlimmerView(QMainWindow):
         self.enfPlot.addItem(self.enfAudioCurveRegion)
 
 
-    #def listPlayerInfo(self):
-    #    self.mediaPlayer.hasSupport(mimeType, codecs, flags)
+    def __editSettings(self):
+        """Menu item; pops up a 'setting' dialog."""
+        dlg = SettingsDialog(self.__qsettings)
+        if dlg.exec():
+            print("Success!")
+        else:
+            print("Cancel!")
+
+
+    def __checkDateRange(self):
+        """Check if 'to' date is later than 'from' date and computes the
+        number of months between 'from' and 'to' date.
+
+        :returns year0: The 'from' year
+        :returns month0: The 'from'month (1..12)
+        :returns n_months: The number of months
+        """
+        year0 = int(self.l_year0.currentText())
+        month0 = self.l_month0.currentIndex()
+        year1 = int(self.l_year1.currentText())
+        month1 = self.l_month1.currentIndex()
+        n_months = (year1 * 12 + month1) - (year0 * 12 + month0) + 1
+        print(f"Get grid frequencies from {year0}-{month0+1:02} to {year1}-{month1+1:02}, {n_months} months")
+        return year0, month0 + 1, n_months
+
+
+    def __showEnfSources(self):
+        self.setCursor(Qt.WaitCursor)
+        dlg = ShowEnfSourcesDlg(self)
+        if dlg.exec():
+            print("Success!")
+        else:
+            print("Cancel!")
+        self.unsetCursor()
+
+
+    def __setButtonStatus(self):
+        """ Enables or disables buttons depending on the clip status."""
+        audioDataLoaded = self.clip is not None and self.clip.fileLoaded()
+        audioEnfLoaded = self.clip is not None and self.clip.ENFavailable()
+        gridEnfLoaded = self.grid is not None and self.grid.ENFavailable()
+
+        self.b_analyse.setEnabled(audioDataLoaded)
+        self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
+
+
+    @classmethod
+    def __convertToWavFile_unused(cls, fn, tmpfn):
+        """ Convert a multimedia file to a WAV file.
+
+        :param fn: The input file name
+        :param tmp fn: Temporary output file in WAV format.
+        """
+        cmd = ["/usr/bin/ffmpeg", "-i", fn, "-ar", "4000",  "-ac", "1", "-f",
+               "wav", tmpfn]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+        output, errors = p.communicate()
+        print("Output:", output)
+        print("Errors:", errors)
+        return p.returncode == 0
 
 
     def __onOpenFileClicked(self):
+        """Button to open a multimedia file clicked."""
         self.setCursor(Qt.WaitCursor)
 
         options = QFileDialog.Options()
@@ -325,7 +497,7 @@ class FlimmerView(QMainWindow):
                                                   "*.mp4", "all files (*)",
                                                   options=options)
         if fileName and fileName != '':
-            self.clip = VideoEnf(self.enfAudioCurve, self.enfAudioCurveSmothed,
+            self.clip = VideoClipEnf(self.enfAudioCurve, self.enfAudioCurveSmothed,
                                 self.clipSpectrumCurve)
             videoProp = self.clip.getVideoProperties(fileName)
             if videoProp is not None:
@@ -334,6 +506,7 @@ class FlimmerView(QMainWindow):
                 self.e_frameRate.setText(str(self.clip.getFrameRate()))
                 self.e_videoFormat.setText(self.clip.getVideoFormat())
                 self.clip.loadVideoFile(fileName, self.sp_readOutTime.value())
+                #self.clip.dumpDataToFile("/tmp/video.csv")
 
                 # Clear all clip-related plots and the region
                 if self.enfAudioCurveRegion:
@@ -356,9 +529,10 @@ class FlimmerView(QMainWindow):
         # Display wait cursor
         self.setCursor(Qt.WaitCursor)
 
-        self.clip.makeEnf(int(self.b_harmonic.currentText()),
-                          float(self.b_band_size.value()/1000),
-                          1)
+        self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
+            int(self.b_harmonic.currentText()),
+            float(self.b_band_size.value()/1000),
+            self.sp_notchFilterQual.value())
 
         if self.c_rem_outliers.isChecked():
             m = self.sp_Outlier_Threshold.value()
@@ -392,11 +566,217 @@ class FlimmerView(QMainWindow):
 
 
     def __onLoadGridHistoryClicked(self):
-        pass
+        """Gets historical ENF values from an ENF database. Called when the
+        'load' button in the 'grid' field is clicked.
+
+        The method checks year and month setting: The 'to' data must be later
+        than the 'from' date; they must not span more than 12 months. This
+        condition exists to limit processing time and memory.
+
+        The method then starts a worker thread to get the ENF data -- either
+        from a local database or from the internet. During this operaton, a
+        progress dialog is displayed. Any data downloaded from the internet is
+        then saved in the database.
+
+        Signals are used to coordinate the GUI thread and the worker thread
+        and the progress dialog.
+
+        :See __onLoadGridHistoryDone():
+
+        """
+        # Some description of QT threads:
+        # https://gist.github.com/majabojarska/952978eb83bcc19653be138525c4b9da
+
+        location = self.l_country.currentText()
+        year, month, n_months = self.__checkDateRange()
+        self.grid = GridEnf(self.databasePath, self.enfGridCurve,
+                            self.correlationCurve)
+
+        if location == 'Test':
+            self.setCursor(Qt.WaitCursor)
+            self.grid.loadWaveFile("71000_ref.wav")
+            self.grid.makeEnf(int(self.b_nominal_freq.currentText()),
+                            float(self.b_band_size.value()/1000),
+                            int(self.b_harmonic.value()))
+            self.grid.plotENF()
+            self.tabs.setCurrentIndex(1)
+            self.unsetCursor()
+            self.__setButtonStatus()
+        else:
+            if n_months < 1:
+                dlg = QMessageBox(self)
+                dlg.setWindowTitle("Error")
+                dlg.setIcon(QMessageBox.Information)
+                dlg.setText(f"'To' date must be later than 'from' date")
+                dlg.exec()
+            elif n_months > 12:
+                dlg = QMessageBox(self)
+                dlg.setWindowTitle("Error")
+                dlg.setIcon(QMessageBox.Information)
+                dlg.setText(f"Limit are 12 months")
+                dlg.exec()
+            else:
+                self.__ldGridProgDlg = QProgressDialog("Loading ENF data from inrternet", "Cancel",
+                                                     0, n_months, self)
+                self.__ldGridProgDlg.setWindowTitle("Getting ENF data")
+                self.__ldGridProgDlg.setCancelButtonText(None)
+                self.__ldGridProgDlg.setWindowModality(Qt.WindowModal)
+                self.__ldGridProgDlg.forceShow()
+                self.__ldGridProgDlg.setValue(0)
+
+                # Move to thread
+                self.__loadGridEnfThread = QThread()
+                self.__loadGridEnfWorker = FlimmerView.GetGridDataWorker(self.grid,
+                                                           location, year, month, n_months,
+                                                           self.__gridHistoryLoadingProgress)
+                self.__loadGridEnfWorker.moveToThread(self.__loadGridEnfThread)
+
+                # Connect signale
+                self.__loadGridEnfThread.started.connect(self.__loadGridEnfWorker.run)
+                self.__loadGridEnfThread.finished.connect(self.__loadGridEnfThread.deleteLater)
+                self.__loadGridEnfWorker.finished.connect(self.__loadGridEnfThread.quit)
+                self.__loadGridEnfWorker.finished.connect(self.__onLoadGridHistoryDone)
+                self.__loadGridEnfWorker.progress.connect(self.__gridHistoryLoadingProgress)
+                self.__loadGridEnfThread.start()
+
+
+
+    @pyqtSlot()
+    def __onLoadGridHistoryDone(self):
+        """Called when __loadGridEnfWorker() finishes.
+
+        It sets the timestamp of the clip (which was previously 0)
+        to the timestamp of the grid data. This way, the clip curve appears
+        to be at the grid curve.
+
+        If there no clip yet then the displayed timespan is the timespan
+        of the grid data; otherwise set the timespan to the one of the
+        clip.
+        """
+        print("__onLoadGridHistoryDone")
+
+        # Terminate thread and wait
+        self.__loadGridEnfThread.quit()
+        self.__loadGridEnfThread.wait()
+
+        self.__ldGridProgDlg.cancel()
+        if self.grid.enf is not None:
+            self.setCursor(Qt.WaitCursor)
+            if self.clip is not None:
+                # Set the clip's timestamp to the grid data timestamp.
+                self.clip.setTimestamp(self.grid.getTimestamp())
+
+                # Get the clip region and assign it to the grid
+                # region.
+                rgn = self.clip.getENFRegion()
+                self.__setRegion(rgn)
+
+                # Get the region from the curve - just for diagnostics
+                rgn = self.enfAudioCurveRegion.getRegion()
+                print(f"__onLoadGridHistoryDone: enfAudioCurveRegion={rgn}")
+
+                # Set x-axis range so that the clip is recognisable
+                t = self.clip.getTimestamp()
+                self.enfPlot.setXRange(t, t + self.clip.getDuration())
+
+                # Plot all clip-related curves
+                print(f"Clip: {self.clip.getTimestamp()}, grid: {self.grid.getTimestamp()}")
+                self.clip.plotENF()
+                self.clip.plotENFsmoothed()
+                self.clip.plotSpectrum()
+            self.grid.plotENF()
+            self.unsetCursor()
+            self.tabs.setCurrentIndex(1)
+        else:
+            # Loading grid data failed
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Information")
+            dlg.setIcon(QMessageBox.Information)
+            dlg.setText(f"Could not get ENF values")
+            dlg.exec()
+        self.__setButtonStatus()
+
+
+    @pyqtSlot(str, int)
+    def __gridHistoryLoadingProgress(self, hint, progress):
+        """Update text and percentage of the progress dialog. Called when the GUI
+        thread receives a 'progress' signal.
+
+        :param hint: Text to be displayed in the progress dialog.
+        :param progress: Progress count, incremented for each month of data retrieved
+        from either the database or from the internet.
+        """
+        print("__gridHistoryLoadingProgress:", hint, progress)
+        self.__ldGridProgDlg.setLabelText(hint)
+        self.__ldGridProgDlg.setValue(progress)
+        if self.__ldGridProgDlg.wasCanceled():
+            print("Was canceled")
 
 
     def __onMatchClicked(self):
-        pass
+        """Called when the 'match' button is clicked.
+
+        The method finds the best match of the ENF series of the clip
+        (self.clip) and the ENF series of the chosen grid (self.grid).
+        Result of the matching process are the values: (1) The time
+        offset in seconds from the beginning of the grid ENF,
+        (2) a quality indication, and (3) an array of correlation values.
+        """
+
+        if self.enfAudioCurveRegion is not None:
+            roi = self.enfAudioCurveRegion.getRegion()
+            self.clip.setENFRegion((int(roi[0]), int(roi[1])))
+
+        now = datetime.datetime.now()
+        print(f"{now} ... starting")
+        algo = self.cb_algo.currentText()
+        assert algo in ('Convolution', 'Pearson', 'Euclidian')
+
+        ## Progress dialog
+        matchingSteps = self.grid.getMatchingSteps(self.clip)
+        print(f"__onMatchClicked: {matchingSteps} steps")
+        self.matchingProgDlg = QProgressDialog("Trying to determine time of recording, computing best fit ...",
+                                               "Cancel",
+                                               0, matchingSteps, self)
+        self.matchingProgDlg.setWindowTitle("Matching clip")
+        self.matchingProgDlg.setWindowModality(Qt.WindowModal)
+        self.matchingProgDlg.canceled.connect(self.grid.onCanceled)
+
+        #
+        corr = self.grid.matchClip(self.clip, algo, self.__matchingProgress)
+        if corr:
+            #self.__showMatches(t, q, corr)
+            # Adjust the timestamp of the clip
+            t = self.grid.getMatchTimestamp()
+            self.clip.setTimestamp(t)
+
+            # Zoom into the matched time range
+            r = self.grid.getMatchRange()
+            self.enfPlot.setXRange(r[0], r[1], padding=0.5)
+
+            # Plot curves
+            self.clip.plotENF()
+            self.clip.plotENFsmoothed()
+            self.grid.plotCorrelation()
+            self.tabs.setCurrentIndex(1)
+
+            # Set text fields
+            self.e_offset.setText(str(t))
+            ts = datetime.datetime.fromtimestamp(t).strftime('%Y-%m-%d %H:%M:%S')
+            self.e_date.setText(ts)
+            self.e_quality.setText(str(self.grid.getMatchQuality()))
+
+            # self.unsetCursor()
+            now = datetime.datetime.now()
+            print(f"__onMatchClicked: {now} ... done")
+            if self.enfAudioCurveRegion is not None:
+                # --- Adjust region of interest ---
+                print(f"__onMatchClicked: region={self.enfAudioCurveRegion.getRegion()}")
+                rgn = self.clip.getENFRegion()
+                self.__setRegion(rgn, movable=False)
+                # ----------------------------------
+
+        self.__setButtonStatus()
 
 
     @pyqtSlot()
@@ -410,7 +790,13 @@ class FlimmerView(QMainWindow):
         self.clip.setENFRegion(rgn)
 
 
-    def __setButtonStatus(self):
+    def __matchingProgress(self, value):
+        """Called by matchXxxx method to indicate the matching progress."""
+        self.matchingProgDlg.setValue(value)
+        #print(f"__matchingProgress: {value}")
+
+
+    def __setButtonStatus_unused(self):
         """ Enables or disables buttons depending on the clip status."""
         audioDataLoaded = self.clip is not None and self.clip.fileLoaded()
         audioEnfLoaded = self.clip is not None and self.clip.ENFavailable()
@@ -420,13 +806,59 @@ class FlimmerView(QMainWindow):
         self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
 
 
+    def closeEvent(self, event):
+        self.__saveSettings()
+        super().closeEvent(event)
+
+
+class ShowEnfSourcesDlg(QDialog):
+
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        columns = ("Grid/country", "From", "To")
+        locations = [r for r in GridDataAccessFactory.enumLocations()]
+
+        self.setWindowTitle("ENF Data Sources")
+
+        self.layout = QVBoxLayout()
+
+        self.layout.addWidget(QLabel("Available date range for each grid/country:"))
+
+        self.table_layout = QGridLayout()
+
+        # Column headers
+        for i in range(len(columns)):
+            h = QLabel(columns[i])
+            h.setStyleSheet("font-weight: bold")
+            self.table_layout.addWidget(h, 0, i)
+
+        # Rows
+        for i in range(len(locations)):
+            f = GridDataAccessFactory.getInstance(locations[i], parent.databasePath)
+            fromDate, toDate = f.getDateRange()
+            self.table_layout.addWidget(QLabel(locations[i]), i+1, 0)
+            self.table_layout.addWidget(QLabel(fromDate), i+1, 1)
+            #self.table_layout.addWidget(QLineEdit(fromDate), i+1, 1)
+            self.table_layout.addWidget(QLabel(toDate), i+1, 2)
+
+        self.layout.addLayout(self.table_layout)
+
+        QBtn = QDialogButtonBox.Ok
+        self.buttonBox = QDialogButtonBox(QBtn)
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+        self.layout.addWidget(self.buttonBox)
+
+        self.setLayout(self.layout)
+
 
 class SettingsDialog(QDialog):
 
     def __init__(self, settings):
         super().__init__()
 
-        assert(type(settings) == Settings)
+        assert(type(settings) == QSettings)
 
         self.settings = settings
         self.setWindowTitle("Edit Settings")
@@ -447,16 +879,15 @@ class SettingsDialog(QDialog):
         self.e_databasePath.setToolTip("Path where downlaeded ENF data are stored")
         self.setLayout(top_layout)
 
-        self.e_databasePath.setText(self.settings.databasePath())
+        self.e_databasePath.setText(self.settings.value("paths/database"))
 
 
     def save(self):
-        self.settings.setDatabasePath(self.e_databasePath.text())
-        self.settings.save()
+        self.settings.setValue("paths/database", self.e_databasePath.text())
         self.accept()
 
 
-class Settings():
+class Settings_unused():
     """ Keep track of settings."""
 
     template = {"databasepath": "/tmp/hum.sqlite"}
@@ -537,12 +968,8 @@ class FlimmerApp(QApplication):
 
 if __name__ == '__main__':
     try:
-        #app = FlimmerApp([])
-        app = QApplication(sys.argv)
-        player = FlimmerView()
-        #player.resize(1200, 1000)
-        player.show()
-        #app.exec()
+        app = FlimmerApp([])
+        app.show()
         sys.exit(app.exec_())
     except MemoryError as e:
         print(e)

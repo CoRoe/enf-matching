@@ -28,6 +28,26 @@ def butter_bandpass_filter(data, locut, hicut, fs, order):
     return signal.sosfilt(sos, data)
 
 
+def notch_filter(data, f0, fs, quality, filename=None):
+    """
+    Pass data through a notch filter.
+
+    :param f0: The fundamental frequency of the notch filter (the spacing between its peaks).
+    :param fs: The sampling frequency of the signal.
+    :param quality: The quality of the filter.
+
+    The filter removes the fundamental frequency fs and its multiples.
+    """
+    # https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.iircomb.html
+    b, a = signal.iircomb(f0, quality, ftype='notch', fs=fs)
+    output_signal = signal.filtfilt(b, a, data).astype(np.int16)
+    if filename is not None:
+        with open('/tmp/video.csv', 'w') as f:
+            for i in range(len(data)):
+                f.write(f"{data[i]},{output_signal[i]}\n")
+    return output_signal
+
+
 def stft(data, fs):
     """Perform a Short-time Fourier Transform (STFT) on input data.
 
@@ -199,39 +219,6 @@ class Enf():
         self.region = (0, self.clip_len_s)
 
 
-    def makeEnf(self, nominal_freq, freq_band_size, harmonic):
-        """Creates an ENF series from the sample data.
-
-        :param: nominal_freq: Nominal grid frequency in Hz; usually 50 or 60 Hz
-        :param: freq_band_size: Size of the frequency band around *nominal_freq* in Hz
-        :param: harmonic:
-
-        The method takes self.data (the samples of the audio recording) and
-        computes self.enf (the series of frequencies of the 50 or 60 Hz hum of
-        the recording.)
-
-        """
-        assert(self.data is not None)
-
-        self.nominal_freq = nominal_freq
-        self.freq_band_size = freq_band_size
-        self.harmonic = harmonic
-        enf_output = enf_series(self.data, self.fs, nominal_freq,
-                                freq_band_size, harmonic_n=harmonic)
-
-        # stft is the Short-Term Fourier Transfrom of the audio file, computed
-        # per second.
-        # self.stft = enf_output['stft']
-
-        # ENF are the ENF values
-        if enf_output['enf'] is not None:
-            enf = [int(e * 1000) for e in enf_output['enf']]
-            self.enf = np.array(enf)
-        else:
-            self.enf = None
-        assert self.enf is None or type(self.enf) == np.ndarray
-
-
     def plotENF(self):
         """Plot the cureve of ENF values.
 
@@ -251,6 +238,13 @@ class Enf():
 
     def setTimestamp(self, timestamp):
         self._timestamp = timestamp
+
+
+    def dumpDataToFile(self, fn):
+        with open(fn, 'w') as fp:
+            for value in self.data:
+                fp.write(str(value))
+                fp.write('\n')
 
 
 class GridEnf(Enf):
@@ -312,7 +306,7 @@ class GridEnf(Enf):
     def getMatchingSteps(self, clip):
         """Return the number of number of iterations. Usefull for a progress
         indicator."""
-        assert type(clip) == ClipEnf
+        assert type(clip) in (AudioClipEnf, VideoClipEnf)
         n_steps = len(self.enf) - len(clip._getENF()) + 1
         return n_steps
 
@@ -361,7 +355,7 @@ class GridEnf(Enf):
         See: https://realpython.com/numpy-scipy-pandas-correlation-python/
         https://numpy.org/doc/stable/reference/generated/numpy.corrcoef.html
         """
-        assert(type(clip) == ClipEnf)
+        assert type(clip) in (AudioClipEnf, VideoClipEnf)
 
         self.aborted = False
 
@@ -438,7 +432,7 @@ class GridEnf(Enf):
             if self.aborted:
                 raise StopIteration
 
-        assert(type(clip) == ClipEnf)
+        assert type(clip) in (AudioClipEnf, VideoClipEnf)
 
         print(f"Start Euclidian correlation computation: {datetime.datetime.now()} ...")
         #timestamp = clip.getTimestamp()
@@ -529,7 +523,7 @@ class GridEnf(Enf):
         self.correlationCurve.setData(timestamps, self.corr)
 
 
-class ClipEnf(Enf):
+class AudioClipEnf(Enf):
     """Handle ENF (Electrical Network Frequency) values found in an audio clip.
 
     Contains methods to match its ENF series against the grid's ENF series.
@@ -552,6 +546,40 @@ class ClipEnf(Enf):
         self.aborted = False
         self.region = None
         self._timestamp = 0
+
+
+    def makeEnf(self, nominal_freq, freq_band_size, harmonic=1):
+        """Creates an ENF series from the sample data.
+
+        :param: nominal_freq: Nominal grid frequency in Hz; usually 50 or 60 Hz
+        :param: freq_band_size: Size of the frequency band around *nominal_freq* in Hz
+        :param: harmonic:
+
+        The method takes self.data (the samples of the audio recording) and
+        computes self.enf (the series of frequencies of the 50 or 60 Hz hum of
+        the recording.)
+
+        """
+        assert self.data is not None
+
+        self.nominal_freq = nominal_freq
+        self.freq_band_size = freq_band_size
+        self.harmonic = harmonic
+        enf_output = enf_series(self.data, self.fs, nominal_freq,
+                                freq_band_size,
+                                harmonic_n=harmonic)
+
+        # stft is the Short-Term Fourier Transfrom of the audio file, computed
+        # per second.
+        # self.stft = enf_output['stft']
+
+        # ENF are the ENF values
+        if enf_output['enf'] is not None:
+            enf = [int(e * 1000) for e in enf_output['enf']]
+            self.enf = np.array(enf)
+        else:
+            self.enf = None
+        assert self.enf is None or type(self.enf) == np.ndarray
 
 
     def makeFFT(self):
@@ -651,7 +679,7 @@ class ClipEnf(Enf):
         self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)
 
 
-class VideoEnf(Enf):
+class VideoClipEnf(Enf):
     def __init__(self, ENFcurve, ENFscurve, spectrumCurve):
         super().__init__(ENFcurve)
         self.ENFscurve = ENFscurve
@@ -716,7 +744,6 @@ class VideoEnf(Enf):
 
         # To have an effective sample frequency of say 600 Hz at a frame rate of 30 fps,
         # each frame must be split into 600 / 30 = 20 slices.
-        # TODO: Better computation
         n_slices = int(fs / self.frame_rate)
 
         # Number of scan lines per slice
@@ -733,10 +760,12 @@ class VideoEnf(Enf):
                 '-'
                 ]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None)
+        frame_number = 0
         while True:
             # Read an entire image frame. Frame format is y800: 1 luminance byte per pixel.
             YframeBuffer = proc.stdout.read(frameSize)
             if len(YframeBuffer) < frameSize:
+                print(f"Found {frame_number} frames; residual frame: {len(YframeBuffer)} bytes")
                 break
             # Convert to array for easier handling
             YArray = np.frombuffer(YframeBuffer, dtype=np.uint8)
@@ -749,6 +778,7 @@ class VideoEnf(Enf):
             # of the last 'real' scan line:
             for s in range(n_slices):
                 np.append(clipLuminanceArray, avg)
+            frame_number += 1
 
         self.data = clipLuminanceArray
         self.fs = round(fs * (n_slices + extra_slices) / n_slices)
@@ -759,103 +789,24 @@ class VideoEnf(Enf):
         return clipLuminanceArray
 
 
-    def loadVideoFile1_unused(self, filename, scale_factor):
-        """Read a video file.
+    def makeEnf(self, grid_freq, nominal_freq: int, freq_band_size, notchf_qual):
 
-        :param filename: The filename; type can be anything that ffmpeg supports.
-        :param scale_factor:
-        :param hres: Number of pixels per scan line of the original file.
-        :returns luminanceArray: Series of luminance values, averaged over
-        either frames or scan lines. The lenght of the array should be a
-        multiple of frmaes or scan lines, resp.
+        # Apply notch filter that removes any signal components of the frame rate
+        # and its harmonics.
+        print(f"Notch filter: frma rate={self.frame_rate}, sample freq={self.fs}, qual={notchf_qual}")
+        self.data = notch_filter(self.data, self.frame_rate, self.fs, notchf_qual)
 
-        The function passes the input file thorugh ffmpeg to convert it
-        to raw grayscale video. One scan line corresponds to one datapoint.
-        Pixel format is yuyv422:
+        locut = nominal_freq - freq_band_size
+        hicut = nominal_freq + freq_band_size
 
-        Y0 U Y1 V
+        # Apply a band-pass Butterworth filter that leaves only the frequency range
+        # where the ENF is expected:
+        print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
+        filtered_data = butter_bandpass_filter(self.data, locut, hicut, self.fs, 10)
 
-        On exit, the region is set to cover the whole video clip.
-        """
-
-        assert type(scale_factor) == int
-        assert type(self.width) == int
-        frameSize = 2 * self.width // scale_factor * self.height // scale_factor
-
-        # Array containing the average brightness of each scan line
-        clipLuminanceArray = np.empty((0, ), dtype=np.uint)
-
-        cmd = ['/usr/bin/ffmpeg', '-i', filename,
-               '-vf', f'scale=iw/{scale_factor}:-1', '-f', 'rawvideo',
-               '-pix_fmt', 'yuyv422', '-'
-               ]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None)
-        while True:
-            # Read an entire image frame
-            YUVframeBuffer = proc.stdout.read(frameSize)
-            if len(YUVframeBuffer) < frameSize:
-                break
-            YUVdataArray = np.frombuffer(YUVframeBuffer, dtype=np.uint8)
-            deinterleavedYUV = [YUVdataArray[idx::2] for idx in range(2)]
-            luminanceArray = deinterleavedYUV[0] * 256
-
-            ar = np.reshape(luminanceArray, (self.height // scale_factor, self.width // scale_factor))
-            m = np.array([np.uint16(np.average(line)) for line in ar])
-            clipLuminanceArray = np.append(clipLuminanceArray, m)
-
-        self.data = clipLuminanceArray
-
-        # Sampling frequency
-        self.fs = self.height / scale_factor * self.frame_rate
-
-        # Region is the entire clip; values are in seconds
-        self.region = (0, self.clip_len_s)
-
-        return clipLuminanceArray
-
-
-    def loadVideoFile_unused(self, filename, scale_factor=4):
-        """Read a video file.
-
-        :param filename: The filename; type can be anything that ffmpeg supports.
-        :param scale_factor:
-        :param hres: Number of pixels per scan line of the original file.
-        :returns luminanceArray: Series of luminance values, averaged over
-        either frames or scan lines. The lenght of the array should be a
-        multiple of frmaes or scan lines, resp.
-
-        The function passes the input file thorugh ffmpeg to convert it
-        to raw grayscale video. One scan line corresponds to one datapoint.
-        Pixel format is yuyv422:
-
-        Y0 U Y1 V
-        """
-
-        assert type(scale_factor) == int
-        assert type(self.width) == int
-
-        # Array containing the average brightness of each scan line
-        clipLuminanceArray = np.empty((0, ), dtype=np.uint)
-
-        cmd = ['/usr/bin/ffmpeg', '-i', filename,
-               '-vf', f'scale=iw/{scale_factor}:-1', '-f', 'rawvideo',
-               '-pix_fmt', 'yuyv422', '-'
-               ]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None)
-        while True:
-            scanlineYUV = proc.stdout.read(2 * self.width // scale_factor)
-            if len(scanlineYUV) == 0:
-                break
-            YUVdataArray = np.frombuffer(scanlineYUV, dtype=np.uint8)
-            deinterleavedYUV = [YUVdataArray[idx::2] for idx in range(2)]
-            luminanceArray = deinterleavedYUV[0] * 256
-            averageLum = np.uint16(np.average(luminanceArray))
-            #print(f"Line {len(clipLuminanceArray)}: {YUVdataArray[0:4]}..{YUVdataArray[60:64]}..{YUVdataArray[480:484]}")
-            clipLuminanceArray = np.append(clipLuminanceArray, averageLum)
-
-        self.data = clipLuminanceArray
-        self.fs = self.height / scale_factor * self.frame_rate
-        return clipLuminanceArray
+        ret = enf_series(filtered_data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
+        self.enf = ret['enf']
+        return self.enf is not None
 
 
     def makeFFT(self):
