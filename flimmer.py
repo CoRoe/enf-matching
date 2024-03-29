@@ -208,7 +208,7 @@ class FlimmerView(QMainWindow):
         analyse_area.addWidget(self.b_band_size, 0, 4)
         analyse_area.addWidget(QLabel("Alias freq"), 0, 5)
         self.b_harmonic = QComboBox(objectName='alias-freq')
-        self.b_harmonic.addItems(("10", "20", "40", "70", "80", "130", "140"))
+        # self.b_harmonic.addItems(("10", "20", "40", "70", "80", "130", "140"))
         analyse_area.addWidget(self.b_harmonic, 0, 6)
         analyse_area.addWidget(QLabel("Notch filter qual."), 0, 7)
         self.sp_notchFilterQual = QSpinBox(objectName="notchfilter-quality")
@@ -470,23 +470,6 @@ class FlimmerView(QMainWindow):
         self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
 
 
-    @classmethod
-    def __convertToWavFile_unused(cls, fn, tmpfn):
-        """ Convert a multimedia file to a WAV file.
-
-        :param fn: The input file name
-        :param tmp fn: Temporary output file in WAV format.
-        """
-        cmd = ["/usr/bin/ffmpeg", "-i", fn, "-ar", "4000",  "-ac", "1", "-f",
-               "wav", tmpfn]
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True)
-        output, errors = p.communicate()
-        print("Output:", output)
-        print("Errors:", errors)
-        return p.returncode == 0
-
-
     def __onOpenFileClicked(self):
         """Button to open a multimedia file clicked."""
         self.setCursor(Qt.WaitCursor)
@@ -506,6 +489,8 @@ class FlimmerView(QMainWindow):
                 self.e_frameRate.setText(str(self.clip.getFrameRate()))
                 self.e_videoFormat.setText(self.clip.getVideoFormat())
                 self.clip.loadVideoFile(fileName, self.sp_readOutTime.value())
+                self.b_harmonic.clear()
+                self.b_harmonic.addItems(self.clip.aliasFreqs(int(self.b_nominal_freq.currentText())))
                 #self.clip.dumpDataToFile("/tmp/video.csv")
 
                 # Clear all clip-related plots and the region
@@ -885,75 +870,6 @@ class SettingsDialog(QDialog):
     def save(self):
         self.settings.setValue("paths/database", self.e_databasePath.text())
         self.accept()
-
-
-class Settings_unused():
-    """ Keep track of settings."""
-
-    template = {"databasepath": "/tmp/hum.sqlite"}
-
-    def __init__(self):
-        """ Initialise the setting.
-
-        Attempt to read the settings from a JSON file. Its path is hard-coded as '~/.hum.json'.
-        If it does not exist or is malformed, default values are used. Internally, the values are
-        stored in a dict.
-        """
-        print("Loading settings ...")
-
-        # File where settings are stored
-        self.settingsPath = os.path.expanduser("~") + "/.hum.json"
-
-        try:
-            with open(self.settingsPath, 'r') as s:
-                self.settings0 = json.load(s)
-                print("... OK")
-        except IOError:
-            print("... Not found")
-            self.settings0 = {}
-        except Exception as e:
-            self.settings0 = {}
-            print(e)
-        self.__setDefaults()
-        self.settings = self.settings0.copy()
-
-
-    def save(self):
-        """ Save the settings to a JSON file.
-
-        The method checks if the settings have actually been modified and
-        if so writes them to a file.
-        """
-        print("Saving settings ...")
-
-        # If values have changed then save the settings
-        if self.settings != self.settings0:
-            print("... not equeal ...")
-            try:
-                with open(self.settingsPath, 'w') as s:
-                    json_object = json.dumps(self.settings, indent=4)
-                    s.write(json_object)
-                    self.settings0 = self.settings.copy()
-                    print("... OK")
-            except IOError as e:
-                print("... Exception:", e)
-        else:
-            print("... not changed")
-
-
-    def __setDefaults(self):
-        for item in Settings.template:
-            if not item in self.settings0:
-                self.settings0[item] = Settings.template[item]
-
-
-    def databasePath(self):
-        """ Get the database path from the settings."""
-        return self.settings["databasepath"]
-
-
-    def setDatabasePath(self, path):
-        self.settings['databasepath'] = path
 
 
 class FlimmerApp(QApplication):

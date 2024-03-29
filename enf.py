@@ -724,6 +724,21 @@ class VideoClipEnf(Enf):
             return None
 
 
+    def aliasFreqs(self, gridFreq):
+        """ Compute a list of all alias frequencies resulting from grid and image frame frequencies.
+
+        :param gridFreq: The nominal grid frequency; usually 50 or 60 Hz
+        :param self.frame_rate. The frame frequency of the video clip; often 24 or 30 frames
+        per second.
+        :returns: List of strings with the alias frequencies.
+        """
+        aliases = set([i * gridFreq + k * self.frame_rate for i in range(2, 6, 2) for k in range(-5, 5)])
+        aliases = sorted(list(aliases))
+
+        # Remove frequencies that are non-positive and convert to strings
+        return [str(a) for a in sorted(list(aliases)) if a > 0 and a < 400]
+
+
     def loadVideoFile(self, filename, readout_time):
         """Read a video file.
 
@@ -776,8 +791,8 @@ class VideoClipEnf(Enf):
 
             # For each of the 'extra' (interpolated scan lines) add the average
             # of the last 'real' scan line:
-            for s in range(n_slices):
-                np.append(clipLuminanceArray, avg)
+            for s in range(extra_slices):
+                clipLuminanceArray = np.append(clipLuminanceArray, avg)
             frame_number += 1
 
         self.data = clipLuminanceArray
@@ -795,8 +810,8 @@ class VideoClipEnf(Enf):
         if notchf_qual != 0:
             # Apply notch filter that removes any signal components of the frame rate
             # and its harmonics.
-            print(f"Notch filter: frma rate={self.frame_rate}, sample freq={self.fs}, qual={notchf_qual}")
-            data = notch_filter(self.data, self.frame_rate, self.fs, notchf_qual)
+            print(f"Notch filter: frame rate={self.frame_rate}, sample freq={self.fs}, qual={notchf_qual}")
+            data = notch_filter(self.data, self.frame_rate, self.fs, notchf_qual, "/tmp/video.csv")
 
         locut = nominal_freq - freq_band_size
         hicut = nominal_freq + freq_band_size
