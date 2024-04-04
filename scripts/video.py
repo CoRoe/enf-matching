@@ -198,13 +198,14 @@ def show_spectrum(freq, vid_signal):
              markerfmt=" ", basefmt="-b")
     plt.xlabel('Freq (Hz)')
     plt.ylabel('FFT Amplitude |X(freq)|')
-    plt.xlim(48, 52)
+    plt.xlim(20, 110)
     #plt.ylim(0, 2000)
     plt.show()
 
 
 if __name__ == '__main__':
     filename = 'philips-hue.mp4'
+    #filename = 'fluorescent-40.mp4'
     hres, vres, fps = checkFormat(filename)
 
     assert hres == 1920
@@ -215,7 +216,7 @@ if __name__ == '__main__':
     sample_freq = int(fps) * (vres // scale_factor)
     #freq, vres = compute_spectrum(vid_signal, sample_freq)
     #show_spectrum(freq, vres)
-    filtered_vid_signal = butter_bandpass_filter(vid_signal, 49, 51, sample_freq, 10)
+    filtered_vid_signal = butter_bandpass_filter(vid_signal, 45, 55, sample_freq, 10)
     freq, vres = compute_spectrum(filtered_vid_signal, sample_freq)
     show_spectrum(freq, vres)
 
