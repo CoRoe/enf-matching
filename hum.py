@@ -103,20 +103,9 @@ class HumView(QMainWindow):
             loadGridEnf() method."""
             self.progress.emit(hint, progr)
 
-    month_names = (
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-    )
+
+    month_names = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
 
     def __init__(self):
         """Initialize variables and create widgets and menu."""
@@ -126,16 +115,17 @@ class HumView(QMainWindow):
         self.settings = Settings()
         self.databasePath = self.settings.databasePath()
 
-        self.enfAudioCurve = None  # ENF series of loaded audio file
+        self.enfAudioCurve = None     # ENF series of loaded audio file
         self.enfAudioCurveSmothed = None
         self.enfAudioCurveRegion = None
-        self.clipSpectrumCurve = None  # Fourier transform of loaded audio file
-        self.enfGridCurve = None  # ENF series of grid
+        self.clipSpectrumCurve = None # Fourier transform of loaded audio file
+        self.enfGridCurve = None      # ENF series of grid
         self.correlationCurve = None  # Correlation of ENF series of audio
-        # clip and grid
+                                      # clip and grid
 
         self.__createWidgets()
         self.__createMenu()
+
 
     def __createWidgets(self):
         """Create widgets including curves and legends for the plot widgets."""
@@ -178,7 +168,7 @@ class HumView(QMainWindow):
 
         # Create a plot widget for the various ENF curves and add it to the
         # tab
-        self.enfPlot = pg.PlotWidget(axisItems={"bottom": pg.DateAxisItem()})
+        self.enfPlot = pg.PlotWidget(axisItems={'bottom': pg.DateAxisItem()})
         self.enfPlot.setLabel("left", "Frequency (mHz)")
         self.enfPlot.setLabel("bottom", "Date and time")
         self.enfPlot.addLegend()
@@ -317,7 +307,7 @@ class HumView(QMainWindow):
         self.b_match.clicked.connect(self.__onMatchClicked)
         result_area.addWidget(self.b_match, 0, 0)
         self.cb_algo = QComboBox()
-        self.cb_algo.addItems(("Convolution", "Euclidian", "Pearson"))
+        self.cb_algo.addItems(('Convolution', 'Euclidian', 'Pearson'))
         result_area.addWidget(self.cb_algo, 0, 1)
         result_area.addWidget(QLabel("Offset (sec)"), 1, 0)
         self.e_offset = QLineEdit()
@@ -336,6 +326,7 @@ class HumView(QMainWindow):
 
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
+
 
     def __createMenu(self):
         """Create a menu."""
@@ -361,6 +352,7 @@ class HumView(QMainWindow):
         editSettingsAction.triggered.connect(self.__editSettings)
         editMenu.addAction(editSettingsAction)
 
+
     def __setRegion(self, region, movable=True):
         """Set the region of interest.
 
@@ -377,6 +369,7 @@ class HumView(QMainWindow):
         self.enfAudioCurveRegion.setMovable(movable)
         self.enfPlot.addItem(self.enfAudioCurveRegion)
 
+
     def __editSettings(self):
         """Menu item; pops up a 'setting' dialog."""
         dlg = SettingsDialog(self.settings)
@@ -384,6 +377,7 @@ class HumView(QMainWindow):
             print("Success!")
         else:
             print("Cancel!")
+
 
     def __checkDateRange(self):
         """Check if 'to' date is later than 'from' date and computes the
@@ -403,6 +397,7 @@ class HumView(QMainWindow):
         )
         return year0, month0 + 1, n_months
 
+
     def __showEnfSources(self):
         self.setCursor(Qt.WaitCursor)
         dlg = ShowEnfSourcesDlg(self)
@@ -412,6 +407,7 @@ class HumView(QMainWindow):
             print("Cancel!")
         self.unsetCursor()
 
+
     def __setButtonStatus(self):
         """Enables or disables buttons depending on the clip status."""
         audioDataLoaded = self.clip is not None and self.clip.fileLoaded()
@@ -420,6 +416,7 @@ class HumView(QMainWindow):
 
         self.b_analyse.setEnabled(audioDataLoaded)
         self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
+
 
     @classmethod
     def __convertToWavFile(cls, fn, tmpfn):
@@ -447,6 +444,7 @@ class HumView(QMainWindow):
         print("Output:", output)
         print("Errors:", errors)
         return p.returncode == 0
+
 
     def __onOpenFileClicked(self):
         """Button to open a multimedia file clicked."""
@@ -489,6 +487,7 @@ class HumView(QMainWindow):
         self.unsetCursor()
         self.__setButtonStatus()
 
+
     def __onAnalyseClicked(self):
         """Called when the 'analyse' button is pressed."""
         # Display wait cursor
@@ -526,6 +525,7 @@ class HumView(QMainWindow):
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
         self.__setButtonStatus()
+
 
     def __onLoadGridHistoryClicked(self):
         """Gets historical ENF values from an ENF database. Called when the
@@ -614,6 +614,8 @@ class HumView(QMainWindow):
                 )
                 self.__loadGridEnfThread.start()
 
+
+
     @pyqtSlot()
     def __onLoadGridHistoryDone(self):
         """Called when __loadGridEnfWorker() finishes.
@@ -653,9 +655,7 @@ class HumView(QMainWindow):
                 self.enfPlot.setXRange(t, t + self.clip.getDuration())
 
                 # Plot all clip-related curves
-                print(
-                    f"Clip: {self.clip.getTimestamp()}, grid: {self.grid.getTimestamp()}"
-                )
+                print(f"Clip: {self.clip.getTimestamp()}, grid: {self.grid.getTimestamp()}")
                 self.clip.plotENF()
                 self.clip.plotENFsmoothed()
                 self.clip.plotSpectrum()
@@ -686,6 +686,7 @@ class HumView(QMainWindow):
         if self.__ldGridProgDlg.wasCanceled():
             print("Was canceled")
 
+
     def __onMatchClicked(self):
         """Called when the 'match' button is clicked.
 
@@ -703,7 +704,7 @@ class HumView(QMainWindow):
         now = datetime.datetime.now()
         print(f"{now} ... starting")
         algo = self.cb_algo.currentText()
-        assert algo in ("Convolution", "Pearson", "Euclidian")
+        assert algo in ('Convolution', 'Pearson', 'Euclidian')
 
         ## Progress dialog
         matchingSteps = self.grid.getMatchingSteps(self.clip)
@@ -757,6 +758,7 @@ class HumView(QMainWindow):
 
         self.__setButtonStatus()
 
+
     @pyqtSlot()
     def __onRegionChanged(self):
         """Called when the user has dragged one of the region boundaries.
@@ -766,6 +768,7 @@ class HumView(QMainWindow):
         """
         rgn = self.enfAudioCurveRegion.getRegion()
         self.clip.setENFRegion(rgn)
+
 
     def __matchingProgress(self, value):
         """Called by matchXxxx method to indicate the matching progress."""
@@ -843,6 +846,7 @@ class SettingsDialog(QDialog):
 
         self.e_databasePath.setText(self.settings.databasePath())
 
+
     def save(self):
         self.settings.setDatabasePath(self.e_databasePath.text())
         self.settings.save()
@@ -867,7 +871,7 @@ class Settings:
         self.settingsPath = os.path.expanduser("~") + "/.hum.json"
 
         try:
-            with open(self.settingsPath, "r") as s:
+            with open(self.settingsPath, 'r') as s:
                 self.settings0 = json.load(s)
                 print("... OK")
         except IOError:
@@ -878,6 +882,7 @@ class Settings:
             print(e)
         self.__setDefaults()
         self.settings = self.settings0.copy()
+
 
     def save(self):
         """Save the settings to a JSON file.
@@ -891,7 +896,7 @@ class Settings:
         if self.settings != self.settings0:
             print("... not equeal ...")
             try:
-                with open(self.settingsPath, "w") as s:
+                with open(self.settingsPath, 'w') as s:
                     json_object = json.dumps(self.settings, indent=4)
                     s.write(json_object)
                     self.settings0 = self.settings.copy()
@@ -901,14 +906,17 @@ class Settings:
         else:
             print("... not changed")
 
+
     def __setDefaults(self):
         for item in Settings.template:
             if item not in self.settings0:
                 self.settings0[item] = Settings.template[item]
 
+
     def databasePath(self):
         """Get the database path from the settings."""
         return self.settings["databasepath"]
+
 
     def setDatabasePath(self, path):
         self.settings["databasepath"] = path

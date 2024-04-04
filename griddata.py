@@ -24,13 +24,13 @@ import struct as st
 
 class GridDataAccessFactory:
 
-    locations = ["GB", "FI"]
+    locations = ['GB', 'FI']
 
     @classmethod
     def getInstance(cls, location, database_path):
-        if location == "GB":
+        if location == 'GB':
             return GBNationalGrid(database_path)
-        elif location == "FI":
+        elif location == 'FI':
             return Fingrid(database_path)
         else:
             return None
@@ -99,10 +99,8 @@ class GridDataAccess:
             else:
                 # Get the URL of the actual data file; the call is delegated to the derived,
                 # grid-specific class
-                progressCallback(
-                    f"ENF values for {y}-{m:02} not in database; downloading from internet...",
-                    progressCount,
-                )
+                progressCallback(f"ENF values for {y}-{m:02} not in database; downloading from internet...",
+                                 progressCount)
                 data = None
                 url, daily, dec = self._getDateUrl(y, m)
                 if url:
@@ -132,6 +130,7 @@ class GridDataAccess:
         print(f"ENF series contains {total.nbytes/1000000} MB")
         return total, timestamp
 
+
     def __downloadFile(self, url):
         print(f"Querying {url}...")
         response = requests.get(url)
@@ -140,6 +139,7 @@ class GridDataAccess:
             return response.content
         else:
             return None
+
 
     def __processCsv(self, csv: bytes):
         print("Extracting frequencies from CSV file ...")
@@ -158,6 +158,7 @@ class GridDataAccess:
             arr = np.array(data, dtype=np.uint16)
             return arr
 
+
     def __process7zData(self, buffer, daily, decimationFactor):
         """Extract ENF values from a buffer with compressed CSV data.
 
@@ -168,12 +169,12 @@ class GridDataAccess:
 
         Assumption is that *buffer* contains one CSV file per day."""
         print("__process7zData")
-        assert isinstance(buffer, bytes)
-        assert isinstance(daily, bool)
-        assert decimationFactor is None or isinstance(decimationFactor, int)
+        assert type(buffer) == bytes
+        assert type(daily) == bool
+        assert decimationFactor is None or type(decimationFactor) == int
 
         b = io.BytesIO(buffer)
-        with py7zr.SevenZipFile(b, "r") as archive:
+        with py7zr.SevenZipFile(b, 'r') as archive:
             if daily:
                 fn_pattern = re.compile(r"\d{4}-\d{2}-(\d{2})\.csv$")
                 month_data_list = [None] * 32
@@ -208,6 +209,7 @@ class GridDataAccess:
                 fn_pattern = re.compile(r"\d{4}-\d{2}\.csv")
                 print("### not daily")
 
+
     def __processZipData(self, buffer, daily, decimationFactor):
         """Extract ENF values from a buffer with compressed CSV data.
 
@@ -220,9 +222,9 @@ class GridDataAccess:
 
         Assumption is that *buffer* contains one CSV file per day."""
         print("__processZipData")
-        assert isinstance(buffer, bytes)
-        assert isinstance(daily, bool)
-        assert decimationFactor is None or isinstance(decimationFactor, int)
+        assert type(buffer) == bytes
+        assert type(daily) == bool
+        assert decimationFactor is None or type(decimationFactor) == int
 
         with zipfile.ZipFile(io.BytesIO(buffer)) as archive:
             if daily:
@@ -269,6 +271,7 @@ class GridDataAccess:
                         return arr
                 return None
 
+
     def __query_db(self, year, month):
         """Query the database for blob list of ENF at blob given date.
 
@@ -291,6 +294,7 @@ class GridDataAccess:
         else:
             print("... not found")
             return None
+
 
     def __save_to_db(self, dataset, year, month):
         assert type(dataset) == np.ndarray and dataset.dtype == np.uint16
@@ -322,17 +326,15 @@ class GridDataAccess:
 
 
 class Fingrid(GridDataAccess):
-    table_name = "Fingrid"
+    table_name = 'Fingrid'
 
     def __init__(self, db_path):
         super(Fingrid, self).__init__(Fingrid.table_name, db_path)
 
         self.cursor = self.sql.cursor()
-        rc = self.cursor.execute(
-            f"CREATE TABLE IF NOT EXISTS {Fingrid.table_name} (date TEXT PRIMARY KEY, frequencies BLOB)"
-        )
+        rc = self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {Fingrid.table_name} (date TEXT PRIMARY KEY, frequencies BLOB)")
         rc = self.sql.commit()
-        pass
+
 
     def getDateRange(self):
         url = "https://data.fingrid.fi/en/dataset/frequency-historical-data"
@@ -347,10 +349,10 @@ class Fingrid(GridDataAccess):
             ret_data = response.text
             # print(ret_data)
             soup = BeautifulSoup(ret_data, "html.parser")
-            res = soup.find_all("a", class_="resource-url-analytics")
+            res = soup.find_all('a', class_='resource-url-analytics')
             for r in res:
                 # print(r['href'])
-                m = pattern.search(r["href"])
+                m = pattern.search(r['href'])
                 if m:
                     # print(m.group(1), m.group(2))
                     d = (int(m.group(1)), m.group(2))
@@ -359,6 +361,7 @@ class Fingrid(GridDataAccess):
                     if d > toDate:
                         toDate = d
         return f"{fromDate[0]}-{fromDate[1]}", f"{toDate[0]}-{toDate[1]}"
+
 
     def _getDateUrl(self, year: int, month: int):
         assert isinstance(year, int) and isinstance(month, int), "should be integers"
@@ -370,7 +373,7 @@ class Fingrid(GridDataAccess):
             ret_data = response.text
             # print(ret_data)
             soup = BeautifulSoup(ret_data, "html.parser")
-            res = soup.find_all("a", class_="resource-url-analytics")
+            res = soup.find_all('a', class_='resource-url-analytics')
             for r in res:
                 # print(r['href'])
                 url = r["href"]
@@ -379,6 +382,7 @@ class Fingrid(GridDataAccess):
                 ):
                     return url, True, 10
         return None, None, None
+
 
     def __processCSV_unused(self, fp):
         """Process a CSV file.
@@ -392,7 +396,7 @@ class Fingrid(GridDataAccess):
 
 
 class GBNationalGrid(GridDataAccess):
-    table_name = "GBNationalGrid"
+    table_name = 'GBNationalGrid'
 
     def __init__(self, db_path):
         super(GBNationalGrid, self).__init__(GBNationalGrid.table_name, db_path)
@@ -417,9 +421,9 @@ class GBNationalGrid(GridDataAccess):
 
         ## Converting the JSON response string to a Python dictionary
         if response.ok:
-            ret_data = response.json()["result"]["resources"]
+            ret_data = response.json()['result']['resources']
             for d in ret_data:
-                m = pattern.search(d["path"])
+                m = pattern.search(d['path'])
                 if m:
                     # print(m.group(1), m.group(2))
                     date = (int(m.group(1)), int(m.group(2)))
@@ -429,6 +433,7 @@ class GBNationalGrid(GridDataAccess):
                         toDate = date
 
         return f"{fromDate[0]}-{fromDate[1]:02}", f"{toDate[0]}-{toDate[1]:02}"
+
 
     def _getDateUrl(self, year, month):
         """
@@ -465,13 +470,13 @@ class GBNationalGrid(GridDataAccess):
         return None, False, None
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     db_path = "/tmp/hum.sqlite"
 
-    g = GridDataAccessFactory.getInstance("GB", db_path)
+    g = GridDataAccessFactory.getInstance('GB', db_path)
     g.getEnfSeries(1900, 11)
     g.getEnfSeries(2023, 11)
 
-    g = GridDataAccessFactory.getInstance("FI", db_path)
-    g.getEnfSeries(2015, 1)  # ZIP compressed
-    g.getEnfSeries(2023, 11)  # 7z compressed
+    g = GridDataAccessFactory.getInstance('FI', db_path)
+    g.getEnfSeries(2015, 1)     # ZIP compressed
+    g.getEnfSeries(2023, 11)    # 7z compressed

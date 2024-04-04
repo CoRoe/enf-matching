@@ -21,7 +21,7 @@ def butter_bandpass_filter(data, locut, hicut, fs, order):
     nyq = 0.5 * fs
     low = locut / nyq
     high = hicut / nyq
-    sos = signal.butter(order, [low, high], analog=False, btype="band", output="sos")
+    sos = signal.butter(order, [low, high], analog=False, btype='band', output='sos')
 
     return signal.sosfilt(sos, data)
 
@@ -57,9 +57,8 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
     locut = harmonic_n * (nominal_freq - freq_band_size)
     hicut = harmonic_n * (nominal_freq + freq_band_size)
 
-    filtered_data = butter_bandpass_filter(
-        downsampled_data, locut, hicut, downsampled_fs, order=10
-    )
+    filtered_data = butter_bandpass_filter(downsampled_data, locut, hicut,
+                                           downsampled_fs, order=10)
 
     f, t, Zxx = stft(filtered_data, downsampled_fs)
 
@@ -87,19 +86,19 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
         max_freqs.append(max_freq)
 
     return {
-        "downsample": {
-            "new_fs": downsampled_fs,
+        'downsample': {
+            'new_fs': downsampled_fs,
         },
-        "filter": {
-            "locut": locut,
-            "hicut": hicut,
+        'filter': {
+            'locut': locut,
+            'hicut': hicut,
         },
-        "stft": {
-            "f": f,
-            "tablew": t,
-            "Zxx": Zxx,
+        'stft': {
+            'f': f,
+            'tablew': t,
+            'Zxx': Zxx,
         },
-        "enf": [f / float(harmonic_n) for f in max_freqs],
+        'enf': [f/float(harmonic_n) for f in max_freqs],
     }
 
 
@@ -119,6 +118,7 @@ class Enf:
         self.ENFcurve = ENFcurve
         ENFcurve.setData([], [])
 
+
     def _getENF(self, smoothedPreferred=True, onlyRegion=True):
         """Get the ENF time series.
 
@@ -136,10 +136,12 @@ class Enf:
         else:
             return enf
 
+
     def ENFavailable(self):
         """Check if ENF value are available. The smoothed data may
         or may not be availble."""
         return self.enf is not None
+
 
     def loadWaveFile(self, fpath):
         """Loads wave_buf .wav file and computes ENF and SFT.
@@ -182,14 +184,13 @@ class Enf:
 
             assert type(self.data) == np.ndarray
             self.clip_len_s = int(self.n_frames / self.fs)
-            print(
-                f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds"
-            )
+            print(f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds")
 
         self._timestamp = 0
 
         # Set the region to the whole clip
         self.region = (0, self.clip_len_s)
+
 
     def makeEnf(self, nominal_freq, freq_band_size, harmonic):
         """Creates an ENF series from the sample data.
@@ -217,9 +218,10 @@ class Enf:
         # self.stft = enf_output['stft']
 
         # ENF are the ENF values
-        enf = [int(e * 1000) for e in enf_output["enf"]]
+        enf = [int(e * 1000) for e in enf_output['enf']]
         self.enf = np.array(enf)
         assert type(self.enf) == np.ndarray
+
 
     def plotENF(self):
         """Plot the cureve of ENF values.
@@ -232,9 +234,11 @@ class Enf:
         timestamps = list(range(self._timestamp, self._timestamp + len(self.enf)))
         self.ENFcurve.setData(timestamps, self.enf)
 
+
     def getTimestamp(self):
         """Return the timestamp of the object."""
         return self._timestamp
+
 
     def setTimestamp(self, timestamp):
         self._timestamp = timestamp
@@ -261,6 +265,7 @@ class GridEnf(Enf):
         self.databasePath = databasePath
         self.t_match = None
 
+
     def setDatabasePath(self, path):
         self.databasePath = path
 
@@ -273,9 +278,9 @@ class GridEnf(Enf):
         :param n_months: Number of months to get grid data for
         """
         assert self.databasePath
-        assert isinstance(year, int) and year > 1970
-        assert isinstance(month, int) and month >= 1 and month <= 12
-        assert location != "Test", "Handled elsewhere"
+        assert type(year) == int and year > 1970
+        assert type(month) == int and month >= 1 and month <= 12
+        assert location != 'Test', "Handled elsewhere"
 
         data_source = GridDataAccessFactory.getInstance(location, self.databasePath)
         self.enf, self._timestamp = data_source.getEnfSeries(
@@ -283,6 +288,7 @@ class GridEnf(Enf):
         )
         assert self.enf is None or type(self.enf) == np.ndarray
         assert type(self._timestamp == int)
+
 
     def onCanceled(self):
         """Handles the 'cancel' signal from a QProgressDialog.
@@ -292,12 +298,14 @@ class GridEnf(Enf):
         """
         self.aborted = True
 
+
     def getMatchingSteps(self, clip):
         """Return the number of number of iterations. Usefull for a progress
         indicator."""
         assert type(clip) == ClipEnf
         n_steps = len(self.enf) - len(clip._getENF()) + 1
         return n_steps
+
 
     def matchClip(self, clip, algo, progressCallback):
         """Compute the time lag where the clip data best matches the grid data.
@@ -322,6 +330,7 @@ class GridEnf(Enf):
         if r:
             self.matchRange = (self.t_match, self.t_match + clip.getDuration())
         return r
+
 
     def __matchPearson(self, clip, progressCallback):
         """Given a reference clip with ENF values find the best fit with the
@@ -386,6 +395,7 @@ class GridEnf(Enf):
             progressCallback(n_steps)
             return True
 
+
     def __matchEuclidianDist(self, clip, progressCallback):
         """Given a reference clip with ENF values find the best fit with the
         own ENF values.
@@ -448,15 +458,14 @@ class GridEnf(Enf):
             # Normalise
             corr = mse / np.sqrt(len(mse))
             min_index = np.argmin(corr)
-            print(
-                f"End Euclidian correlation computation {datetime.datetime.now()} ..."
-            )
+            print(f"End Euclidian correlation computation {datetime.datetime.now()} ...")
             progressCallback(n_steps)
             # return timestamp + min_index, corr[min_index], corr
             self.t_match = self._timestamp + min_index - clip.region[0]
             self.quality = corr[min_index]
             self.corr = corr
             return True
+
 
     def __matchConv(self, clip, progressCallback):
         """Compute correlation between clip ENF and grid ENF.
@@ -496,11 +505,14 @@ class GridEnf(Enf):
     def getMatchTimestamp(self):
         return self.t_match
 
+
     def getMatchRange(self):
         return self.matchRange
 
+
     def getMatchQuality(self):
         return self.quality
+
 
     def plotCorrelation(self):
         self.correlationCurve.setData([], [])
@@ -550,9 +562,11 @@ class ClipEnf(Enf):
 
         return self.fft_freq, self.fft_ampl
 
+
     def fileLoaded(self):
         """Check if a file has been loaded and its PCM data are vailebale."""
         return self.data is not None
+
 
     def setENFRegion(self, region: tuple):
         """Set a region of interest for the ENF values. Only ENF values inside
@@ -568,18 +582,22 @@ class ClipEnf(Enf):
         )
         print("setENFRegion:", self.region)
 
+
     def getENFRegion(self):
         """It is an error to query the region before it has been set with setENFRegion()."""
         rgn = (self.region[0] + self._timestamp, self.region[1] + self._timestamp)
         return rgn
 
+
     def getDuration(self):
         """Length of the clip in seconds."""
         return self.clip_len_s
 
+
     def sampleRate(self):
         """Return the sample rate in samples / second."""
         return self.fs
+
 
     def outlierSmoother(self, threshold, win):
         """Find outliers in the ENF values replace them with the median of
@@ -612,14 +630,17 @@ class ClipEnf(Enf):
                 )
         self.enfs = x_corr
 
+
     def clearSmoothedENF(self):
         self.enfs = None
+
 
     def plotENFsmoothed(self):
         self.ENFscurve.setData([], [])
         if self.enfs is not None:
             timestamps = list(range(self._timestamp, self._timestamp + len(self.enfs)))
             self.ENFscurve.setData(timestamps, self.enfs)
+
 
     def plotSpectrum(self):
 
