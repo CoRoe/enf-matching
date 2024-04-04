@@ -6,6 +6,7 @@ import pandas as pd
 import pyqtgraph as pg
 import subprocess
 import json
+import array as arr
 from griddata import GridDataAccessFactory
 
 
@@ -32,7 +33,8 @@ def notch_filter(data, f0, fs, quality, filename=None):
     """
     Pass data through a notch filter.
 
-    :param f0: The fundamental frequency of the notch filter (the spacing between its peaks).
+    :param f0: The fundamental frequency of the notch filter (the spacing
+    between its peaks).
     :param fs: The sampling frequency of the signal.
     :param quality: The quality of the filter.
 
@@ -78,6 +80,8 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
     :param harmonic_n: the harmonic number to look for
     :returns: a list of ENF values, one per second or None on error
     """
+
+    # TODO: Return a numpy array for performance
     print(f"enf_series: sample freq={fs}, grid freq={nominal_freq}, freq band={freq_band_size}, harmonic={harmonic_n}")
     # downsampled_data, downsampled_fs = downsample(data, fs, 300)
     downsampled_data, downsampled_fs = (data, fs)
@@ -583,9 +587,9 @@ class AudioClipEnf(Enf):
 
 
     def makeFFT(self):
-        """ Compute the spectrum of the original audio recording.
+        """ Compute the spectrum of the original audio or video recording.
 
-        :param: self.data: sample data of the audio file
+        :param: self.data: sample data of the audio or video file
         :param: self.fs: sample frequency
         :returns: Tuple (frequencies, amplitudes)
         """
@@ -709,7 +713,7 @@ class VideoClipEnf(Enf):
             #print("Output:", output)
             p = json.loads(output)
             for stream in p['streams']:
-                if 'pix_fmt' in stream:
+                if stream['codec_type'] == 'video':
                     # We know it is a video stream; set some instance variables
                     self.height = stream['height']
                     self.width = stream['width']
@@ -804,9 +808,106 @@ class VideoClipEnf(Enf):
         return clipLuminanceArray
 
 
-    def makeEnf(self, grid_freq, nominal_freq: int, freq_band_size, notchf_qual):
+    def loadVideoFileSliced(self, filename, v_slices, h_slices, csv=None):
+        """Open a video clip and load its luminance as time series into memory.
 
-        data = self.data
+        :param filename: Name of the video clip.
+        :param v_slices: Number of rectangles stacked vertically.
+        :param h_slices: Number of rectangles side-by-side.
+        :returns self.data: List of arrays where each element contains a series of luminance
+        values.
+        :returns self.fs: Scan frequency - the frames-per-second value of the clip.
+
+        Each frame of the video is divided into rectangles; in total there are v_slices * h_slices
+        rectangles. For each such rectangle the average luminance is computed and stored.
+        There is thus v_slices * h_slices time series.
+        """
+
+        # Frame size in bytes
+        frameSize = self.width * self.height
+
+        # Horizontal slice size
+        hsize = self.width // h_slices
+
+        # Vertical slice size
+        vsize = self.height // v_slices
+
+        #slice_luminance = np.empty(v_slices * h_slices)
+        #luminance_per_slice = np.zeros(dtype=np.uint16, shape=(self.nb_frames+1, v_slices, h_slices))
+        #luminance_per_slice = [arr.array('H')] * v_slices * h_slices
+        luminance_per_slice = [arr.array('H') for v in range(v_slices) for h in range(h_slices)]
+
+        cmd = ['/usr/bin/ffmpeg', '-i', filename,
+               '-vf', 'extractplanes=y', '-f', 'rawvideo',
+                '-'
+                ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None)
+        frame_number = 0
+        while True:
+            # Read an entire image frame. Frame format is y800: 1 luminance byte per pixel.
+            YframeBuffer = proc.stdout.read(frameSize)
+            if len(YframeBuffer) < frameSize:
+                print(f"Found {frame_number} frames; residual frame: {len(YframeBuffer)} bytes")
+                break
+
+            image = np.frombuffer(YframeBuffer, dtype=np.uint8)
+            image = np.reshape(image, (self.height, self.width))
+            # Indices are (row, column)
+            for r in range(v_slices):
+                for c in range(h_slices):
+                    #print(r, c)
+                    rect = image[vsize * r : vsize * r + vsize,
+                                 hsize * c : hsize * c + hsize]
+                    avg = np.uint16(np.average(rect * 256))
+                    luminance_per_slice[h_slices * r + c].append(avg)
+
+            frame_number += 1
+
+        if csv:
+            with open(csv, 'w') as fp:
+                for frame in range(frame_number):
+                    for r in range(v_slices * h_slices):
+                        # fp.write(f"{luminance_per_slice[r][frame]},")
+                        a = luminance_per_slice[r]
+                        fp.write(f"{str(a[frame])},")
+                    fp.write('\n')
+
+        print(np.shape(luminance_per_slice))
+        self.fs = self.frame_rate
+        self.data = [np.array(l) for l in luminance_per_slice]
+
+        # Region is the entire clip; values are in seconds
+        self.region = (0, self.clip_len_s)
+
+
+
+    def makeEnf(self, grid_freq, nominal_freq: int, freq_band_size, notchf_qual):
+        """Extract an ENF time series from a video signal.
+
+        :param nominal_freq: The frequency where ENF deviations are expected.
+        :param freq_band_size: The width of the bandpass filter around nominal_freq
+        :param notchf_qual: The quality of the notch filter that removes the image
+        frame frequency and its harmonics.
+        :param self.data: Video signal
+        :param self.frame_rate: Image frame frequency; typically 24 or 30 frames per second.
+        :param self.fs: Sampling frequency
+
+        :returns: True if the ENF time series could be extracted and False if some error
+        occurred.
+        :returns self.data: 'Best' time series
+        :returns self.enf: ENF time series
+        """
+
+        def bestROI(s):
+            deltas = [np.max(time_series) - np.min(time_series) for time_series in s]
+            return s[np.argmin(deltas)]
+
+        print(f"makeEnf: grid_freq={grid_freq}, nominal_freq={nominal_freq}, {freq_band_size}")
+        s = np.shape(self.data)
+        assert len(s) in (1, 2)
+        if len(s) == 2:
+            self.data = bestROI(self.data)
+
         if notchf_qual != 0:
             # Apply notch filter that removes any signal components of the frame rate
             # and its harmonics.
@@ -819,10 +920,13 @@ class VideoClipEnf(Enf):
         # Apply a band-pass Butterworth filter that leaves only the frequency range
         # where the ENF is expected:
         print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
-        filtered_data = butter_bandpass_filter(data, locut, hicut, self.fs, 10)
+        filtered_data = butter_bandpass_filter(self.data, locut, hicut, self.fs, 10)
 
         ret = enf_series(filtered_data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
         self.enf = ret['enf']
+
+        assert self.enf is None or type(self.enf) == list
+        assert type(self.data) == np.ndarray and len(np.shape(self.data)) == 1
         return self.enf is not None
 
 

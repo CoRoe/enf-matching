@@ -2,8 +2,6 @@
 #
 
 import sys
-import json
-import os
 import pyqtgraph as pg
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QVBoxLayout, QLineEdit, QFileDialog, QLabel,
@@ -11,13 +9,10 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QComboBox, QSpinBox, QTabWidget, QDoubleSpinBox,
                              QMenuBar, QAction, QDialog, QMessageBox,
                              QDialogButtonBox, QProgressDialog)
-from PyQt5.Qt import Qt, QSettings, QFileInfo
+from PyQt5.Qt import Qt, QSettings, QFileInfo, QHBoxLayout
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 import datetime
-import os
-import subprocess
-import json
 from griddata import GridDataAccessFactory
 from enf import VideoClipEnf, GridEnf
 
@@ -121,6 +116,12 @@ class FlimmerView(QMainWindow):
                     value = self.__qsettings.value(w.objectName())
                     if value is not None:
                         w.setCurrentText(value)
+            for w in self.findChildren(QGroupBox):
+                if w.objectName() != "":
+                    value = self.__qsettings.value(w.objectName())
+                    if value is not None:
+                        print(w.objectName(), '->', value)
+                        w.setChecked(value == 'true')
 
         # Set default
         self.databasePath = self.__qsettings.value("paths/database")
@@ -137,6 +138,9 @@ class FlimmerView(QMainWindow):
         for w in self.findChildren(QComboBox):
             if w.objectName() != "":
                 self.__qsettings.setValue(w.objectName(), w.currentText())
+        for w in self.findChildren(QGroupBox):
+            if w.objectName() != "":
+                self.__qsettings.setValue(w.objectName(), w.isChecked())
 
 
 
@@ -189,53 +193,105 @@ class FlimmerView(QMainWindow):
         :returns analyse_group: The QGroupBox containing the other widgets.
         """
         analyse_group = QGroupBox("Analysis")
-        analyse_area = QGridLayout()
+        analyse_area = QVBoxLayout()
         analyse_group.setLayout(analyse_area)
 
-        # Widgets in the first row
-        analyse_area.addWidget(QLabel("Grid freq"), 0, 1)
+        # Add subgroups
+        analyse_area.addWidget(self.__createAnalyseCommon())
+        analyse_area.addWidget(self.__createAnalyseRSGroup())
+        analyse_area.addWidget(self.__createAnalyseGridROIGroup())
+        analyse_area.addWidget(self.__createAnalyseOutliers())
+
+        # 'Analyse' button in the last row
+        button_area = QHBoxLayout()
+        self.b_analyse = QPushButton("Analyse")
+        self.b_analyse.clicked.connect(self.__onAnalyseClicked)
+        button_area.addWidget(self.b_analyse)
+        button_area.addStretch()
+        analyse_area.addLayout(button_area)
+
+        return analyse_group
+
+
+    def __createAnalyseCommon(self):
+        # Widgets in the first row with common elements
+        analyse_group_common = QGroupBox("Common parameters")
+        analyse_area_common = QGridLayout()
+        analyse_group_common.setLayout(analyse_area_common)
+        analyse_area_common.addWidget(QLabel("Grid freq"), 0, 1)
         self.b_nominal_freq = QComboBox(objectName='grid-freq')
         self.b_nominal_freq.addItems(("50", "60"))
         self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
                                        " 50 Hz in most countries.")
-        analyse_area.addWidget(self.b_nominal_freq, 0, 2)
-        analyse_area.addWidget(QLabel("Band width"), 0, 3)
+        analyse_area_common.addWidget(self.b_nominal_freq, 0, 2)
+        analyse_area_common.addWidget(QLabel("Band width"), 0, 3)
         self.b_band_size = QSpinBox(objectName='bandwidth')
-        self.b_band_size.setRange(0, 500)
+        self.b_band_size.setRange(0, 1000)
         self.b_band_size.setValue(200)
         self.b_band_size.setMinimumWidth(100)
         self.b_band_size.setSuffix(" mHz")
-        analyse_area.addWidget(self.b_band_size, 0, 4)
-        analyse_area.addWidget(QLabel("Alias freq"), 0, 5)
-        self.b_harmonic = QComboBox(objectName='alias-freq')
-        # self.b_harmonic.addItems(("10", "20", "40", "70", "80", "130", "140"))
-        analyse_area.addWidget(self.b_harmonic, 0, 6)
-        analyse_area.addWidget(QLabel("Notch filter qual."), 0, 7)
+        analyse_area_common.addWidget(self.b_band_size, 0, 4)
+        analyse_area_common.setColumnStretch(5, 1)
+
+        return analyse_group_common
+
+
+    def __createAnalyseRSGroup(self):
+        self.analyse_rs_group = QGroupBox("Rolling Shutter", checkable=True, objectName="Rolling-shutter")
+        self.analyse_rs_group.clicked.connect(self.__onAnalyseRSClicked)
+        analyse_rs_area = QGridLayout()
+        self.analyse_rs_group.setLayout(analyse_rs_area)
+
+        analyse_rs_area.addWidget(QLabel("Alias freq."), 0, 0)
+        self.cb_rs_alias = QComboBox()
+        analyse_rs_area.addWidget(self.cb_rs_alias, 0, 1)
+
+        analyse_rs_area.addWidget(QLabel("Notch filter qual."), 0, 2)
         self.sp_notchFilterQual = QSpinBox(objectName="notchfilter-quality")
         self.sp_notchFilterQual.setValue(10)
         self.sp_notchFilterQual.setToolTip("Quality of notch filter; 0 for no filter")
-        analyse_area.addWidget(self.sp_notchFilterQual, 0, 8)
+        analyse_rs_area.addWidget(self.sp_notchFilterQual, 0, 3)
+        analyse_rs_area.setColumnStretch(4, 1)
+        return self.analyse_rs_group
 
-        # Widgets in the second row
+
+    def __createAnalyseGridROIGroup(self):
+        self.analyse_groi_group = QGroupBox("Grid ROI", checkable=True, objectName="GridROI")
+        self.analyse_groi_group.clicked.connect(self.__onAnalyseGridROIClicked)
+        analyse_groi_area = QGridLayout()
+        self.analyse_groi_group.setLayout(analyse_groi_area)
+        analyse_groi_area.addWidget(QLabel("Vertical"), 0, 0)
+        self.sp_vert = QSpinBox(objectName="gridroi-vertical")
+        self.sp_vert.setRange(1, 10)
+        analyse_groi_area.addWidget(self.sp_vert, 0, 1)
+        analyse_groi_area.addWidget(QLabel("Horizontal"), 0, 2)
+        self.sp_horiz = QSpinBox(objectName="gridroi-horizontal")
+        self.sp_horiz.setRange(1, 10)
+        analyse_groi_area.addWidget(self.sp_horiz, 0, 3)
+        analyse_groi_area.setColumnStretch(4, 1)
+
+        return self.analyse_groi_group
+
+
+    def __createAnalyseOutliers(self):
+        analyse_outliers_group = QGroupBox("Outlier treatment")
+        analyse_area_outliers = QGridLayout()
+        analyse_outliers_group.setLayout(analyse_area_outliers)
+
         self.c_rem_outliers = QCheckBox("Remove outliers")
-        analyse_area.addWidget(self.c_rem_outliers, 1, 0)
-        analyse_area.addWidget(QLabel("Threshold"), 1, 1)
+        analyse_area_outliers.addWidget(self.c_rem_outliers, 0, 0)
+        analyse_area_outliers.addWidget(QLabel("Threshold"), 0, 1)
         self.sp_Outlier_Threshold = QDoubleSpinBox(self)
         self.sp_Outlier_Threshold.setValue(3)
         self.sp_Outlier_Threshold.setToolTip("Factor defining which ENF values shall be considered invalid outliers")
-        analyse_area.addWidget(self.sp_Outlier_Threshold,1, 2)
-        analyse_area.addWidget(QLabel("Window"), 1, 3)
+        analyse_area_outliers.addWidget(self.sp_Outlier_Threshold,0, 2)
+        analyse_area_outliers.addWidget(QLabel("Window"), 0, 3)
         self.sp_window = QSpinBox()
         self.sp_window.setValue(5)
-        analyse_area.addWidget(self.sp_window,1, 4)
+        analyse_area_outliers.addWidget(self.sp_window,0, 4)
+        analyse_area_outliers.setColumnStretch(5, 1)
 
-        analyse_area.setColumnStretch(7, 1)
-
-        self.b_analyse = QPushButton("Analyse")
-        self.b_analyse.clicked.connect(self.__onAnalyseClicked)
-        analyse_area.addWidget(self.b_analyse, 2, 0)
-
-        return analyse_group
+        return analyse_outliers_group
 
 
     def __createGridAreaWidgets(self):
@@ -321,8 +377,6 @@ class FlimmerView(QMainWindow):
 
         # Define layouts
         main_layout = QVBoxLayout()
-        #right_layout = QVBoxLayout()
-        #main_layout.addLayout(right_layout)
 
         self.tabs = QTabWidget()
 
@@ -336,7 +390,7 @@ class FlimmerView(QMainWindow):
         self.clipSpectrumPlot.showGrid(x=True, y=True)
         self.clipSpectrumPlot.setXRange(0, 1000)
         self.clipSpectrumPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        self.clipSpectrumCurve = self.clipSpectrumPlot.plot(name="WAV file spectrum",
+        self.clipSpectrumCurve = self.clipSpectrumPlot.plot(name="Clip spectrum",
                                            pen=FlimmerView.spectrumCurveColour)
         self.tabs.addTab(self.clipSpectrumPlot, "Clip Spectrum")
 
@@ -488,10 +542,15 @@ class FlimmerView(QMainWindow):
                 self.e_duration.setText(str(self.clip.getDuration()))
                 self.e_frameRate.setText(str(self.clip.getFrameRate()))
                 self.e_videoFormat.setText(self.clip.getVideoFormat())
-                self.clip.loadVideoFile(fileName, self.sp_readOutTime.value())
-                self.b_harmonic.clear()
-                self.b_harmonic.addItems(self.clip.aliasFreqs(int(self.b_nominal_freq.currentText())))
-                #self.clip.dumpDataToFile("/tmp/video.csv")
+
+                # File loading depends on the analyse method
+                if self.analyse_groi_group.isChecked():
+                    self.clip.loadVideoFileSliced(fileName,
+                                                  self.sp_vert.value(), self.sp_horiz.value())
+                else:
+                    self.clip.loadVideoFile(fileName, self.sp_readOutTime.value())
+                    self.cb_rs_alias.clear()
+                    self.cb_rs_alias.addItems(self.clip.aliasFreqs(int(self.b_nominal_freq.currentText())))
 
                 # Clear all clip-related plots and the region
                 if self.enfAudioCurveRegion:
@@ -514,8 +573,14 @@ class FlimmerView(QMainWindow):
         # Display wait cursor
         self.setCursor(Qt.WaitCursor)
 
-        self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
-            int(self.b_harmonic.currentText()),
+        if self.analyse_groi_group.isChecked():
+            self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
+            10,
+            float(self.b_band_size.value()/1000),
+            0)
+        else:
+            self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
+            int(self.cb_rs_alias.currentText()),
             float(self.b_band_size.value()/1000),
             self.sp_notchFilterQual.value())
 
@@ -548,6 +613,20 @@ class FlimmerView(QMainWindow):
         self.unsetCursor()
         self.tabs.setCurrentIndex(1)
         self.__setButtonStatus()
+
+
+    @pyqtSlot()
+    def __onAnalyseRSClicked(self):
+        print("__onAnalyseRSClicked()")
+        s = self.analyse_rs_group.isChecked()
+        self.analyse_groi_group.setChecked(not s)
+
+
+    @pyqtSlot()
+    def __onAnalyseGridROIClicked(self):
+        print("__onAnalyseGridROIClicked()")
+        s = self.analyse_groi_group.isChecked()
+        self.analyse_rs_group.setChecked(not s)
 
 
     def __onLoadGridHistoryClicked(self):
