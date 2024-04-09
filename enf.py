@@ -684,6 +684,10 @@ class AudioClipEnf(Enf):
 
 
 class VideoClipEnf(Enf):
+
+    method_gridroi = 0
+    method_rs = 1
+
     def __init__(self, ENFcurve, ENFscurve, spectrumCurve):
         super().__init__(ENFcurve)
         self.ENFscurve = ENFscurve
@@ -743,13 +747,15 @@ class VideoClipEnf(Enf):
         return [str(a) for a in sorted(list(aliases)) if a > 0 and a < 400]
 
 
-    def loadVideoFile(self, filename, readout_time):
+    def loadVideoFileRollingShutter(self, filename, readout_time):
         """Read a video file.
 
         :param filename: The filename; type can be anything that ffmpeg supports.
         :param readout_time: Time [ms] it takes to read out all scan lines from
         the image sensor. This is a camera parameter.
         """
+
+        self.__method = VideoClipEnf.method_rs
 
         # Frame size in bytes
         frameSize = self.width * self.height
@@ -808,7 +814,7 @@ class VideoClipEnf(Enf):
         return clipLuminanceArray
 
 
-    def loadVideoFileSliced(self, filename, v_slices, h_slices, csv=None):
+    def loadVideoFileGridROI(self, filename, v_slices, h_slices, csv=None):
         """Open a video clip and load its luminance as time series into memory.
 
         :param filename: Name of the video clip.
@@ -822,6 +828,8 @@ class VideoClipEnf(Enf):
         rectangles. For each such rectangle the average luminance is computed and stored.
         There is thus v_slices * h_slices time series.
         """
+
+        self.__method = VideoClipEnf.method_gridroi
 
         # Frame size in bytes
         frameSize = self.width * self.height
@@ -881,7 +889,7 @@ class VideoClipEnf(Enf):
 
 
 
-    def makeEnf(self, grid_freq, nominal_freq: int, freq_band_size, notchf_qual):
+    def makeEnf(self, grid_freq, nominal_freq: int, freq_band_size, notchf_qual=0):
         """Extract an ENF time series from a video signal.
 
         :param nominal_freq: The frequency where ENF deviations are expected.
@@ -902,35 +910,67 @@ class VideoClipEnf(Enf):
             deltas = [np.max(time_series) - np.min(time_series) for time_series in s]
             return s[np.argmin(deltas)]
 
-        print(f"makeEnf: grid_freq={grid_freq}, nominal_freq={nominal_freq}, {freq_band_size}")
-        s = np.shape(self.data)
-        assert len(s) in (1, 2)
-        if len(s) == 2:
-            self.data = bestROI(self.data)
+        print(f"makeEnf: method is {self.__method}")
+        print(f"makeEnf: grid_freq={grid_freq}, nominal_freq={nominal_freq}, freq band:{freq_band_size}")
 
-        if notchf_qual != 0:
+        assert self.__method in (VideoClipEnf.method_rs, VideoClipEnf.method_gridroi)
+        data = self.data
+
+        if self.__method == VideoClipEnf.method_rs:
+            # Compute the spectrum of the unprocess input data
+            spectrum = fft.fft(data)
+            self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
+            self.fft_ampl = np.abs(spectrum)
+
+            locut = nominal_freq - freq_band_size
+            hicut = nominal_freq + freq_band_size
+
             # Apply notch filter that removes any signal components of the frame rate
             # and its harmonics.
             print(f"Notch filter: frame rate={self.frame_rate}, sample freq={self.fs}, qual={notchf_qual}")
-            data = notch_filter(self.data, self.frame_rate, self.fs, notchf_qual, "/tmp/video.csv")
+            data = notch_filter(data, self.frame_rate, self.fs, notchf_qual, "/tmp/video.csv")
 
-        locut = nominal_freq - freq_band_size
-        hicut = nominal_freq + freq_band_size
+            # Apply a band-pass Butterworth filter that leaves only the frequency range
+            # where the ENF is expected:
+            print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
+            data = butter_bandpass_filter(data, locut, hicut, self.fs, 10)
+            ret = enf_series(data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
+            enf = ret['enf']
 
-        # Apply a band-pass Butterworth filter that leaves only the frequency range
-        # where the ENF is expected:
-        print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
-        filtered_data = butter_bandpass_filter(self.data, locut, hicut, self.fs, 10)
+        elif self.__method == VideoClipEnf.method_gridroi:
+            locut = nominal_freq - freq_band_size
+            hicut = nominal_freq + freq_band_size
 
-        ret = enf_series(filtered_data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
-        self.enf = ret['enf']
+            assert len(np.shape(self.data)) == 2
+            data = bestROI(data)
 
-        assert self.enf is None or type(self.enf) == list
-        assert type(self.data) == np.ndarray and len(np.shape(self.data)) == 1
+            # Compute the spectrum of the unprocess input data
+            spectrum = fft.fft(data)
+            self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
+            self.fft_ampl = np.abs(spectrum)
+
+            # Apply a band-pass Butterworth filter that leaves only the frequency range
+            # where the ENF is expected:
+            print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
+            data = butter_bandpass_filter(data, locut, hicut, self.fs, 10)
+            ret = enf_series(data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
+            enf = ret['enf']
+
+        if enf is not None:
+            # Convert into np.array for uniformness
+            self.enf = np.array(enf)
+        else:
+            self.enf = None
+
+        # Spectrum must be two1-dimensional arrays
+        assert type(self.fft_freq) == np.ndarray and len(np.shape(self.fft_freq)) == 1
+        assert type(self.fft_ampl) == np.ndarray and len(np.shape(self.fft_ampl)) == 1
+
+        assert self.enf is None or (type(self.enf) == np.ndarray and len(np.shape(self.enf)) == 1)
         return self.enf is not None
 
 
-    def makeFFT(self):
+    def makeFFT_unused(self):
         """ Compute the spectrum of the original audio recording.
 
         :param: self.data: sample data of the audio file

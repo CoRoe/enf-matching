@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QComboBox, QSpinBox, QTabWidget, QDoubleSpinBox,
                              QMenuBar, QAction, QDialog, QMessageBox,
                              QDialogButtonBox, QProgressDialog)
-from PyQt5.Qt import Qt, QSettings, QFileInfo, QHBoxLayout
+from PyQt5.Qt import Qt, QSettings, QFileInfo, QHBoxLayout, QRadioButton
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 import datetime
@@ -116,7 +116,7 @@ class FlimmerView(QMainWindow):
                     value = self.__qsettings.value(w.objectName())
                     if value is not None:
                         w.setCurrentText(value)
-            for w in self.findChildren(QGroupBox):
+            for w in self.findChildren(QRadioButton):
                 if w.objectName() != "":
                     value = self.__qsettings.value(w.objectName())
                     if value is not None:
@@ -138,7 +138,7 @@ class FlimmerView(QMainWindow):
         for w in self.findChildren(QComboBox):
             if w.objectName() != "":
                 self.__qsettings.setValue(w.objectName(), w.currentText())
-        for w in self.findChildren(QGroupBox):
+        for w in self.findChildren(QRadioButton):
             if w.objectName() != "":
                 self.__qsettings.setValue(w.objectName(), w.isChecked())
 
@@ -155,32 +155,49 @@ class FlimmerView(QMainWindow):
         video_group.setLayout(video_area)
 
         # 'Video' area
+        self.b_rolling_shutter = QRadioButton("Rolling Shutter", objectName="Rolling-shutter")
+        video_area.addWidget(self.b_rolling_shutter, 0, 0)
+        self.b_rolling_shutter.clicked.connect(self.__onAnalyseRSClicked)
+        video_area.addWidget(QLabel("Sensor read-out time"), 0, 1)
+        self.sp_readOutTime = QSpinBox(objectName='readout-time')
+        self.sp_readOutTime.setRange(0, 50)
+        video_area.addWidget(self.sp_readOutTime, 0, 2)
+
+        self.b_grid_roi = QRadioButton("Grid ROI", objectName="GridROI")
+        video_area.addWidget(self.b_grid_roi, 1, 0)
+        self.b_grid_roi.clicked.connect(self.__onAnalyseGridROIClicked)
+
+        video_area.addWidget(QLabel("# Grid rows:"), 1, 1)
+        self.sp_vert = QSpinBox(objectName="gridroi-vertical")
+        self.sp_vert.setRange(1, 10)
+        video_area.addWidget(self.sp_vert, 1, 2)
+        video_area.addWidget(QLabel("# Grid columns:"), 1, 3)
+        self.sp_horiz = QSpinBox(objectName="gridroi-horizontal")
+        self.sp_horiz.setRange(1, 10)
+        video_area.addWidget(self.sp_horiz, 1, 4)
+
         self.b_load = QPushButton("Load")
         self.b_load.setToolTip("Load a video file to analyse.")
         self.b_load.clicked.connect(self.__onOpenFileClicked)
-        video_area.addWidget(self.b_load, 0, 0)
+        video_area.addWidget(self.b_load, 2, 0)
         self.e_fileName = QLineEdit()
         self.e_fileName.setReadOnly(True)
         self.e_fileName.setToolTip("Video file that has been loaded.")
-        video_area.addWidget(self.e_fileName, 0, 1, 1, 5)
-        video_area.addWidget(QLabel("Video format"), 1, 0)
+        video_area.addWidget(self.e_fileName, 2, 1, 1, 5)
+
+        video_area.addWidget(QLabel("Video format"), 3, 0)
         self.e_videoFormat = QLineEdit()
         self.e_videoFormat.setReadOnly(True)
-        video_area.addWidget(self.e_videoFormat, 1, 1)
-        video_area.addWidget(QLabel("Frame rate"), 1, 2)
+        video_area.addWidget(self.e_videoFormat, 3, 1)
+        video_area.addWidget(QLabel("Frame rate"), 3, 2)
         self.e_frameRate = QLineEdit()
         self.e_frameRate.setReadOnly(True)
-        video_area.addWidget(self.e_frameRate, 1, 3)
-        video_area.addWidget(QLabel("Duration (sec)"), 1, 4)
+        video_area.addWidget(self.e_frameRate, 3, 3)
+        video_area.addWidget(QLabel("Duration (sec)"), 3, 4)
         self.e_duration = QLineEdit()
         self.e_duration.setReadOnly(True)
-        video_area.addWidget(self.e_duration, 1, 5)
+        video_area.addWidget(self.e_duration, 3, 5)
 
-        video_area.addWidget(QLabel("Sensor read-out time"), 2, 0)
-        self.sp_readOutTime = QSpinBox(objectName='readout-time')
-        self.sp_readOutTime.setRange(0, 50)
-        self.sp_readOutTime.setValue(30)
-        video_area.addWidget(self.sp_readOutTime, 2, 1)
 
         video_area.setColumnStretch(6, 1)
 
@@ -193,27 +210,55 @@ class FlimmerView(QMainWindow):
         :returns analyse_group: The QGroupBox containing the other widgets.
         """
         analyse_group = QGroupBox("Analysis")
-        analyse_area = QVBoxLayout()
+        analyse_area = QGridLayout()
         analyse_group.setLayout(analyse_area)
 
         # Add subgroups
-        analyse_area.addWidget(self.__createAnalyseCommon())
-        analyse_area.addWidget(self.__createAnalyseRSGroup())
-        analyse_area.addWidget(self.__createAnalyseGridROIGroup())
-        analyse_area.addWidget(self.__createAnalyseOutliers())
+        #analyse_area.addWidget(self.__createAnalyseCommon())
+        #analyse_area.addWidget(self.__createAnalyseRSGroup())
+        #analyse_area.addWidget(self.__createAnalyseGridROIGroup())
+        #analyse_area.addWidget(self.__createAnalyseOutliers())
+
+        analyse_area.addWidget(QLabel("Grid freq"), 0, 1)
+        self.b_nominal_freq = QComboBox(objectName='grid-freq')
+        self.b_nominal_freq.addItems(("50", "60"))
+        self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
+                                       " 50 Hz in most countries.")
+        analyse_area.addWidget(self.b_nominal_freq, 0, 2)
+        analyse_area.addWidget(QLabel("Alias freq."), 0, 3)
+        self.cb_aliasFreq = QComboBox()
+        analyse_area.addWidget(self.cb_aliasFreq, 0, 4)
+        analyse_area.addWidget(QLabel("Band width"), 0, 5)
+        self.b_band_size = QSpinBox(objectName='bandwidth')
+        self.b_band_size.setRange(0, 1000)
+        self.b_band_size.setValue(200)
+        self.b_band_size.setMinimumWidth(100)
+        self.b_band_size.setSuffix(" mHz")
+        analyse_area.addWidget(self.b_band_size, 0, 6)
+
+        self.c_rem_outliers = QCheckBox("Remove outliers")
+        analyse_area.addWidget(self.c_rem_outliers, 1, 0)
+        analyse_area.addWidget(QLabel("Threshold"), 1, 1)
+        self.sp_Outlier_Threshold = QDoubleSpinBox(self)
+        self.sp_Outlier_Threshold.setValue(3)
+        self.sp_Outlier_Threshold.setToolTip("Factor defining which ENF values shall be considered invalid outliers")
+        analyse_area.addWidget(self.sp_Outlier_Threshold,1, 2)
+        analyse_area.addWidget(QLabel("Window"), 1, 3)
+        self.sp_window = QSpinBox()
+        self.sp_window.setValue(5)
+        analyse_area.addWidget(self.sp_window,1, 4)
 
         # 'Analyse' button in the last row
-        button_area = QHBoxLayout()
         self.b_analyse = QPushButton("Analyse")
         self.b_analyse.clicked.connect(self.__onAnalyseClicked)
-        button_area.addWidget(self.b_analyse)
-        button_area.addStretch()
-        analyse_area.addLayout(button_area)
+        analyse_area.addWidget(self.b_analyse, 2, 0)
+
+        analyse_area.setColumnStretch(7, 1)
 
         return analyse_group
 
 
-    def __createAnalyseCommon(self):
+    def __createAnalyseCommon_unused(self):
         # Widgets in the first row with common elements
         analyse_group_common = QGroupBox("Common parameters")
         analyse_area_common = QGridLayout()
@@ -236,15 +281,15 @@ class FlimmerView(QMainWindow):
         return analyse_group_common
 
 
-    def __createAnalyseRSGroup(self):
+    def __createAnalyseRSGroup_unused(self):
         self.analyse_rs_group = QGroupBox("Rolling Shutter", checkable=True, objectName="Rolling-shutter")
         self.analyse_rs_group.clicked.connect(self.__onAnalyseRSClicked)
         analyse_rs_area = QGridLayout()
         self.analyse_rs_group.setLayout(analyse_rs_area)
 
         analyse_rs_area.addWidget(QLabel("Alias freq."), 0, 0)
-        self.cb_rs_alias = QComboBox()
-        analyse_rs_area.addWidget(self.cb_rs_alias, 0, 1)
+        self.cb_aliasFreq = QComboBox()
+        analyse_rs_area.addWidget(self.cb_aliasFreq, 0, 1)
 
         analyse_rs_area.addWidget(QLabel("Notch filter qual."), 0, 2)
         self.sp_notchFilterQual = QSpinBox(objectName="notchfilter-quality")
@@ -254,8 +299,7 @@ class FlimmerView(QMainWindow):
         analyse_rs_area.setColumnStretch(4, 1)
         return self.analyse_rs_group
 
-
-    def __createAnalyseGridROIGroup(self):
+    def __createAnalyseGridROIGroup_unused(self):
         self.analyse_groi_group = QGroupBox("Grid ROI", checkable=True, objectName="GridROI")
         self.analyse_groi_group.clicked.connect(self.__onAnalyseGridROIClicked)
         analyse_groi_area = QGridLayout()
@@ -273,7 +317,7 @@ class FlimmerView(QMainWindow):
         return self.analyse_groi_group
 
 
-    def __createAnalyseOutliers(self):
+    def __createAnalyseOutliers_unused(self):
         analyse_outliers_group = QGroupBox("Outlier treatment")
         analyse_area_outliers = QGridLayout()
         analyse_outliers_group.setLayout(analyse_area_outliers)
@@ -544,13 +588,13 @@ class FlimmerView(QMainWindow):
                 self.e_videoFormat.setText(self.clip.getVideoFormat())
 
                 # File loading depends on the analyse method
-                if self.analyse_groi_group.isChecked():
-                    self.clip.loadVideoFileSliced(fileName,
+                if self.b_grid_roi.isChecked():
+                    self.clip.loadVideoFileGridROI(fileName,
                                                   self.sp_vert.value(), self.sp_horiz.value())
                 else:
-                    self.clip.loadVideoFile(fileName, self.sp_readOutTime.value())
-                    self.cb_rs_alias.clear()
-                    self.cb_rs_alias.addItems(self.clip.aliasFreqs(int(self.b_nominal_freq.currentText())))
+                    self.clip.loadVideoFileRollingShutter(fileName, self.sp_readOutTime.value())
+                self.cb_aliasFreq.clear()
+                self.cb_aliasFreq.addItems(self.clip.aliasFreqs(int(self.b_nominal_freq.currentText())))
 
                 # Clear all clip-related plots and the region
                 if self.enfAudioCurveRegion:
@@ -568,21 +612,16 @@ class FlimmerView(QMainWindow):
         self.__setButtonStatus()
 
 
+    @pyqtSlot()
     def __onAnalyseClicked(self):
         """ Called when the 'analyse' button is pressed. """
         # Display wait cursor
         self.setCursor(Qt.WaitCursor)
 
-        if self.analyse_groi_group.isChecked():
-            self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
-            10,
+        self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
+            int(self.cb_aliasFreq.currentText()),
             float(self.b_band_size.value()/1000),
-            0)
-        else:
-            self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
-            int(self.cb_rs_alias.currentText()),
-            float(self.b_band_size.value()/1000),
-            self.sp_notchFilterQual.value())
+            30)
 
         if self.c_rem_outliers.isChecked():
             m = self.sp_Outlier_Threshold.value()
@@ -590,7 +629,8 @@ class FlimmerView(QMainWindow):
             self.clip.outlierSmoother(m, window)
         else:
             self.clip.clearSmoothedENF()
-        self.clip.makeFFT()
+        # self.clip.makeFFT()
+
         if self.grid is not None:
             gridtimestamp = self.grid.getTimestamp()
             self.clip.setTimestamp(gridtimestamp)
@@ -617,18 +657,21 @@ class FlimmerView(QMainWindow):
 
     @pyqtSlot()
     def __onAnalyseRSClicked(self):
+        """Radio button clicked."""
         print("__onAnalyseRSClicked()")
-        s = self.analyse_rs_group.isChecked()
-        self.analyse_groi_group.setChecked(not s)
+        s = self.b_rolling_shutter.isChecked()
+        self.b_grid_roi.setChecked(not s)
 
 
     @pyqtSlot()
     def __onAnalyseGridROIClicked(self):
+        """Radio button clicked."""
         print("__onAnalyseGridROIClicked()")
-        s = self.analyse_groi_group.isChecked()
-        self.analyse_rs_group.setChecked(not s)
+        s = self.b_grid_roi.isChecked()
+        self.b_rolling_shutter.setChecked(not s)
 
 
+    @pyqtSlot()
     def __onLoadGridHistoryClicked(self):
         """Gets historical ENF values from an ENF database. Called when the
         'load' button in the 'grid' field is clicked.
