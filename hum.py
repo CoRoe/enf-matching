@@ -34,7 +34,7 @@ import os
 import subprocess
 import json
 from griddata import GridDataAccessFactory
-from enf import ClipEnf, GridEnf
+from enf import AudioClipEnf, GridEnf
 
 
 class HumView(QMainWindow):
@@ -452,13 +452,12 @@ class HumView(QMainWindow):
 
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
-        fileName, x = QFileDialog.getOpenFileName(
-            self, "Open audio or video file", "", "all files (*)", options=options
-        )
-        if fileName and fileName != "":
-            self.clip = ClipEnf(
-                self.enfAudioCurve, self.enfAudioCurveSmothed, self.clipSpectrumCurve
-            )
+        fileName, x = QFileDialog.getOpenFileName(self,"Open audio or video file",
+                                                  "", "all files (*)",
+                                                  options=options)
+        if fileName and fileName != '':
+            self.clip = AudioClipEnf(self.enfAudioCurve, self.enfAudioCurveSmothed,
+                                self.clipSpectrumCurve)
             tmpfn = f"/tmp/hum-tmp-{os.getpid()}.wav"
             if self.__convertToWavFile(fileName, tmpfn):
                 self.clip.loadWaveFile(tmpfn)

@@ -4,6 +4,9 @@ from scipy import signal, fft
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
+import subprocess
+import json
+import array as arr
 from griddata import GridDataAccessFactory
 
 
@@ -26,18 +29,44 @@ def butter_bandpass_filter(data, locut, hicut, fs, order):
     return signal.sosfilt(sos, data)
 
 
+def notch_filter(data, f0, fs, quality, filename=None):
+    """
+    Pass data through a notch filter.
+
+    :param f0: The fundamental frequency of the notch filter (the spacing
+    between its peaks).
+    :param fs: The sampling frequency of the signal.
+    :param quality: The quality of the filter.
+
+    The filter removes the fundamental frequency fs and its multiples.
+    """
+    # https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.iircomb.html
+    b, a = signal.iircomb(f0, quality, ftype='notch', fs=fs)
+    output_signal = signal.filtfilt(b, a, data).astype(np.int16)
+    if filename is not None:
+        with open('/tmp/video.csv', 'w') as f:
+            for i in range(len(data)):
+                f.write(f"{data[i]},{output_signal[i]}\n")
+    return output_signal
+
+
 def stft(data, fs):
     """Perform a Short-time Fourier Transform (STFT) on input data.
 
     :param data: list of signal sample amplitudes
     :param fs: the sample rate
     :returns: tuple of (array of sample frequencies, array of segment times, STFT of input).
-    This is the same return format as scipy's stft function.
+    This is the same return format as scipy's stft function. Returns None if STFT
+    throws a ValueError exception.
     """
     window_size_seconds = 16
     nperseg = fs * window_size_seconds
     noverlap = fs * (window_size_seconds - 1)
-    f, t, Zxx = signal.stft(data, fs, nperseg=nperseg, noverlap=noverlap)
+    # STFT will throw an except if the data series is too short
+    try:
+        f, t, Zxx = signal.stft(data, fs, nperseg=nperseg, noverlap=noverlap)
+    except ValueError:
+        f, t, Zxx = None, None, None
     return f, t, Zxx
 
 
@@ -49,14 +78,18 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
     :param nominal_freq: the nominal ENF (in Hz) to look near
     :param freq_band_size: the size of the band around the nominal value in which to look for the ENF
     :param harmonic_n: the harmonic number to look for
-    :returns: a list of ENF values, one per second
+    :returns: a list of ENF values, one per second or None on error
     """
+
+    # TODO: Return a numpy array for performance
+    print(f"enf_series: sample freq={fs}, grid freq={nominal_freq}, freq band={freq_band_size}, harmonic={harmonic_n}")
     # downsampled_data, downsampled_fs = downsample(data, fs, 300)
     downsampled_data, downsampled_fs = (data, fs)
 
     locut = harmonic_n * (nominal_freq - freq_band_size)
     hicut = harmonic_n * (nominal_freq + freq_band_size)
 
+    print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={downsampled_fs}, order=10")
     filtered_data = butter_bandpass_filter(downsampled_data, locut, hicut,
                                            downsampled_fs, order=10)
 
@@ -75,15 +108,16 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
 
         return interpolated
 
-    bin_size = f[1] - f[0]
+    if Zxx is not None:
+        bin_size = f[1] - f[0]
 
-    max_freqs = []
-    for spectrum in np.abs(np.transpose(Zxx)):
-        max_amp = np.amax(spectrum)
-        max_freq_idx = np.where(spectrum == max_amp)[0][0]
+        max_freqs = []
+        for spectrum in np.abs(np.transpose(Zxx)):
+            max_amp = np.amax(spectrum)
+            max_freq_idx = np.where(spectrum == max_amp)[0][0]
 
-        max_freq = quadratic_interpolation(spectrum, max_freq_idx, bin_size)
-        max_freqs.append(max_freq)
+            max_freq = quadratic_interpolation(spectrum, max_freq_idx, bin_size)
+            max_freqs.append(max_freq)
 
     return {
         'downsample': {
@@ -98,7 +132,7 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
             'tablew': t,
             'Zxx': Zxx,
         },
-        'enf': [f/float(harmonic_n) for f in max_freqs],
+        'enf': if Zxx is not None: [f/float(harmonic_n) for f in max_freqs],
     }
 
 
@@ -244,6 +278,13 @@ class Enf:
         self._timestamp = timestamp
 
 
+    def dumpDataToFile(self, fn):
+        with open(fn, 'w') as fp:
+            for value in self.data:
+                fp.write(str(value))
+                fp.write('\n')
+
+
 class GridEnf(Enf):
     """Models grid frequency values.
 
@@ -269,7 +310,9 @@ class GridEnf(Enf):
     def setDatabasePath(self, path):
         self.databasePath = path
 
-    def loadGridEnf(self, location, year: int, month: int, n_months, progressCallback):
+
+    def loadGridEnf(self, location, year: int, month: int, n_months,
+                    progressCallback):
         """Load the grid ENF values from a database.
 
         :param location: The name/location of the grid
@@ -302,7 +345,7 @@ class GridEnf(Enf):
     def getMatchingSteps(self, clip):
         """Return the number of number of iterations. Usefull for a progress
         indicator."""
-        assert type(clip) == ClipEnf
+        assert type(clip) in (AudioClipEnf, VideoClipEnf)
         n_steps = len(self.enf) - len(clip._getENF()) + 1
         return n_steps
 
@@ -351,7 +394,7 @@ class GridEnf(Enf):
         See: https://realpython.com/numpy-scipy-pandas-correlation-python/
         https://numpy.org/doc/stable/reference/generated/numpy.corrcoef.html
         """
-        assert type(clip) == ClipEnf
+        assert type(clip) in (AudioClipEnf, VideoClipEnf)
 
         self.aborted = False
 
@@ -430,7 +473,7 @@ class GridEnf(Enf):
             if self.aborted:
                 raise StopIteration
 
-        assert type(clip) == ClipEnf
+        assert type(clip) in (AudioClipEnf, VideoClipEnf)
 
         print(f"Start Euclidian correlation computation: {datetime.datetime.now()} ...")
         # timestamp = clip.getTimestamp()
@@ -483,10 +526,12 @@ class GridEnf(Enf):
         timestamp = self._timestamp
         progressCallback(0)
         xcorr = signal.correlate(
-            grid_freqs - np.mean(grid_freqs), enf - np.mean(enf), mode="same"
-        )
+            grid_freqs-np.mean(grid_freqs),
+            enf-np.mean(enf),
+            mode='same')
         max_index = np.argmax(xcorr)
-        ref_normalization = pd.Series(grid_freqs).rolling(len(enf), center=True).std()
+        ref_normalization = pd.Series(grid_freqs).rolling(len(enf),
+                                                          center=True).std()
         signal_normalization = np.std(enf)
         xcorr_norm = xcorr / ref_normalization / signal_normalization / len(enf)
 
@@ -520,7 +565,7 @@ class GridEnf(Enf):
         self.correlationCurve.setData(timestamps, self.corr)
 
 
-class ClipEnf(Enf):
+class AudioClipEnf(Enf):
     """Handle ENF (Electrical Network Frequency) values found in an audio clip.
 
     Contains methods to match its ENF series against the grid's ENF series.
@@ -545,10 +590,45 @@ class ClipEnf(Enf):
         self.region = None
         self._timestamp = 0
 
-    def makeFFT(self):
-        """Compute the spectrum of the original audio recording.
 
-        :param: self.data: sample data of the audio file
+    def makeEnf(self, nominal_freq, freq_band_size, harmonic=1):
+        """Creates an ENF series from the sample data.
+
+        :param: nominal_freq: Nominal grid frequency in Hz; usually 50 or 60 Hz
+        :param: freq_band_size: Size of the frequency band around *nominal_freq* in Hz
+        :param: harmonic:
+
+        The method takes self.data (the samples of the audio recording) and
+        computes self.enf (the series of frequencies of the 50 or 60 Hz hum of
+        the recording.)
+
+        """
+        assert self.data is not None
+
+        self.nominal_freq = nominal_freq
+        self.freq_band_size = freq_band_size
+        self.harmonic = harmonic
+        enf_output = enf_series(self.data, self.fs, nominal_freq,
+                                freq_band_size,
+                                harmonic_n=harmonic)
+
+        # stft is the Short-Term Fourier Transfrom of the audio file, computed
+        # per second.
+        # self.stft = enf_output['stft']
+
+        # ENF are the ENF values
+        if enf_output['enf'] is not None:
+            enf = [int(e * 1000) for e in enf_output['enf']]
+            self.enf = np.array(enf)
+        else:
+            self.enf = None
+        assert self.enf is None or type(self.enf) == np.ndarray
+
+
+    def makeFFT(self):
+        """ Compute the spectrum of the original audio or video recording.
+
+        :param: self.data: sample data of the audio or video file
         :param: self.fs: sample frequency
         :returns: Tuple (frequencies, amplitudes)
         """
@@ -647,3 +727,359 @@ class ClipEnf(Enf):
         assert self.fft_ampl is not None and self.fft_freq is not None
         self.spectrumCurve.setData([])
         self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)
+
+
+class VideoClipEnf(Enf):
+
+    method_gridroi = 0
+    method_rs = 1
+
+    def __init__(self, ENFcurve, ENFscurve, spectrumCurve):
+        super().__init__(ENFcurve)
+        self.ENFscurve = ENFscurve
+        self.spectrumCurve = spectrumCurve
+
+        # The curves may pre-exist; clear them
+        self.ENFscurve.setData([], [])
+        self.spectrumCurve.setData([], [])
+
+        self.enfs = None
+        self.fft_freq = None
+        self.fft_ampl = None
+        self.data = None
+        self.aborted = False
+        self.region = None
+        self._timestamp = 0
+
+
+    def getVideoProperties(self, filename):
+        # -v quiet -show_streams -show_format -print_format json
+        cmd = ["/usr/bin/ffprobe", '-v', 'quiet', '-show_streams', '-show_format',
+                '-print_format', 'json', filename]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+        output, errors = p.communicate()
+        if p.returncode == 0:
+            #print("Output:", output)
+            p = json.loads(output)
+            for stream in p['streams']:
+                if stream['codec_type'] == 'video':
+                    # We know it is a video stream; set some instance variables
+                    self.height = stream['height']
+                    self.width = stream['width']
+                    self.clip_len_s = int(float(stream['duration']))
+                    # Someting like '30/1'
+                    self.frame_rate = int(stream['r_frame_rate'][:-2])
+                    break
+            else:
+                return None
+            return p
+        else:
+            return None
+
+
+    def aliasFreqs(self, gridFreq):
+        """ Compute a list of all alias frequencies resulting from grid and image frame frequencies.
+
+        :param gridFreq: The nominal grid frequency; usually 50 or 60 Hz
+        :param self.frame_rate. The frame frequency of the video clip; often 24 or 30 frames
+        per second.
+        :returns: List of strings with the alias frequencies.
+        """
+        aliases = set([i * gridFreq + k * self.frame_rate for i in range(2, 6, 2) for k in range(-5, 5)])
+        aliases = sorted(list(aliases))
+
+        # Remove frequencies that are non-positive and convert to strings
+        return [str(a) for a in sorted(list(aliases)) if a > 0 and a < 400]
+
+
+    def loadVideoFileRollingShutter(self, filename, readout_time):
+        """Read a video file.
+
+        :param filename: The filename; type can be anything that ffmpeg supports.
+        :param readout_time: Time [ms] it takes to read out all scan lines from
+        the image sensor. This is a camera parameter.
+        """
+
+        self.__method = VideoClipEnf.method_rs
+
+        # Frame size in bytes
+        frameSize = self.width * self.height
+
+        # Intended sampling frequency; may become a bit higher because of
+        # the added interpolated ('extra') scan lines.
+        fs = 600
+
+        # Number of scan lines to be interpolated
+        extra_scan_lines = self.height * (1 - readout_time/1000 * self.frame_rate)
+
+        # To have an effective sample frequency of say 600 Hz at a frame rate of 30 fps,
+        # each frame must be split into 600 / 30 = 20 slices.
+        n_slices = int(fs / self.frame_rate)
+
+        # Number of scan lines per slice
+        slice_size = int(self.height / n_slices)
+
+        # Number of slices with interpolated scan lines
+        extra_slices = round(extra_scan_lines / slice_size)
+
+        # Array containing the average brightness of each s
+        clipLuminanceArray = np.empty((0, ), dtype=np.uint16)
+
+        cmd = ['/usr/bin/ffmpeg', '-i', filename,
+               '-vf', 'extractplanes=y', '-f', 'rawvideo',
+                '-'
+                ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None)
+        frame_number = 0
+        while True:
+            # Read an entire image frame. Frame format is y800: 1 luminance byte per pixel.
+            YframeBuffer = proc.stdout.read(frameSize)
+            if len(YframeBuffer) < frameSize:
+                print(f"Found {frame_number} frames; residual frame: {len(YframeBuffer)} bytes")
+                break
+            # Convert to array for easier handling
+            YArray = np.frombuffer(YframeBuffer, dtype=np.uint8)
+            for s in range(0, frameSize, slice_size * self.width):
+                #print(s, s + slice_size * self.width)
+                avg = np.uint16(np.average(YArray[s:s + slice_size * self.width]) * 256)
+                clipLuminanceArray = np.append(clipLuminanceArray, avg)
+
+            # For each of the 'extra' (interpolated scan lines) add the average
+            # of the last 'real' scan line:
+            for s in range(extra_slices):
+                clipLuminanceArray = np.append(clipLuminanceArray, avg)
+            frame_number += 1
+
+        self.data = clipLuminanceArray
+        self.fs = round(fs * (n_slices + extra_slices) / n_slices)
+
+        # Region is the entire clip; values are in seconds
+        self.region = (0, self.clip_len_s)
+
+        return clipLuminanceArray
+
+
+    def loadVideoFileGridROI(self, filename, v_slices, h_slices, csv=None):
+        """Open a video clip and load its luminance as time series into memory.
+
+        :param filename: Name of the video clip.
+        :param v_slices: Number of rectangles stacked vertically.
+        :param h_slices: Number of rectangles side-by-side.
+        :returns self.data: List of arrays where each element contains a series of luminance
+        values.
+        :returns self.fs: Scan frequency - the frames-per-second value of the clip.
+
+        Each frame of the video is divided into rectangles; in total there are v_slices * h_slices
+        rectangles. For each such rectangle the average luminance is computed and stored.
+        There is thus v_slices * h_slices time series.
+        """
+
+        self.__method = VideoClipEnf.method_gridroi
+
+        # Frame size in bytes
+        frameSize = self.width * self.height
+
+        # Horizontal slice size
+        hsize = self.width // h_slices
+
+        # Vertical slice size
+        vsize = self.height // v_slices
+
+        #slice_luminance = np.empty(v_slices * h_slices)
+        #luminance_per_slice = np.zeros(dtype=np.uint16, shape=(self.nb_frames+1, v_slices, h_slices))
+        #luminance_per_slice = [arr.array('H')] * v_slices * h_slices
+        luminance_per_slice = [arr.array('H') for v in range(v_slices) for h in range(h_slices)]
+
+        cmd = ['/usr/bin/ffmpeg', '-i', filename,
+               '-vf', 'extractplanes=y', '-f', 'rawvideo',
+                '-'
+                ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None)
+        frame_number = 0
+        while True:
+            # Read an entire image frame. Frame format is y800: 1 luminance byte per pixel.
+            YframeBuffer = proc.stdout.read(frameSize)
+            if len(YframeBuffer) < frameSize:
+                print(f"Found {frame_number} frames; residual frame: {len(YframeBuffer)} bytes")
+                break
+
+            image = np.frombuffer(YframeBuffer, dtype=np.uint8)
+            image = np.reshape(image, (self.height, self.width))
+            # Indices are (row, column)
+            for r in range(v_slices):
+                for c in range(h_slices):
+                    #print(r, c)
+                    rect = image[vsize * r : vsize * r + vsize,
+                                 hsize * c : hsize * c + hsize]
+                    avg = np.uint16(np.average(rect * 256))
+                    luminance_per_slice[h_slices * r + c].append(avg)
+
+            frame_number += 1
+
+        if csv:
+            with open(csv, 'w') as fp:
+                for frame in range(frame_number):
+                    for r in range(v_slices * h_slices):
+                        # fp.write(f"{luminance_per_slice[r][frame]},")
+                        a = luminance_per_slice[r]
+                        fp.write(f"{str(a[frame])},")
+                    fp.write('\n')
+
+        print(np.shape(luminance_per_slice))
+        self.fs = self.frame_rate
+        self.data = [np.array(l) for l in luminance_per_slice]
+
+        # Region is the entire clip; values are in seconds
+        self.region = (0, self.clip_len_s)
+
+
+
+    def makeEnf(self, grid_freq, nominal_freq: int, freq_band_size, notchf_qual=0):
+        """Extract an ENF time series from a video signal.
+
+        :param nominal_freq: The frequency where ENF deviations are expected.
+        :param freq_band_size: The width of the bandpass filter around nominal_freq
+        :param notchf_qual: The quality of the notch filter that removes the image
+        frame frequency and its harmonics.
+        :param self.data: Video signal
+        :param self.frame_rate: Image frame frequency; typically 24 or 30 frames per second.
+        :param self.fs: Sampling frequency
+
+        :returns: True if the ENF time series could be extracted and False if some error
+        occurred.
+        :returns self.data: 'Best' time series
+        :returns self.enf: ENF time series
+        """
+
+        def bestROI(s):
+            deltas = [np.max(time_series) - np.min(time_series) for time_series in s]
+            return s[np.argmin(deltas)]
+
+        print(f"makeEnf: method is {self.__method}")
+        print(f"makeEnf: grid_freq={grid_freq}, nominal_freq={nominal_freq}, freq band:{freq_band_size}")
+
+        assert self.__method in (VideoClipEnf.method_rs, VideoClipEnf.method_gridroi)
+        data = self.data
+
+        if self.__method == VideoClipEnf.method_rs:
+            # Compute the spectrum of the unprocess input data
+            spectrum = fft.fft(data)
+            self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
+            self.fft_ampl = np.abs(spectrum)
+
+            locut = nominal_freq - freq_band_size
+            hicut = nominal_freq + freq_band_size
+
+            # Apply notch filter that removes any signal components of the frame rate
+            # and its harmonics.
+            print(f"Notch filter: frame rate={self.frame_rate}, sample freq={self.fs}, qual={notchf_qual}")
+            data = notch_filter(data, self.frame_rate, self.fs, notchf_qual, "/tmp/video.csv")
+
+            # Apply a band-pass Butterworth filter that leaves only the frequency range
+            # where the ENF is expected:
+            print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
+            data = butter_bandpass_filter(data, locut, hicut, self.fs, 10)
+            ret = enf_series(data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
+            enf = ret['enf']
+
+        elif self.__method == VideoClipEnf.method_gridroi:
+            locut = nominal_freq - freq_band_size
+            hicut = nominal_freq + freq_band_size
+
+            assert len(np.shape(self.data)) == 2
+            data = bestROI(data)
+
+            # Compute the spectrum of the unprocess input data
+            spectrum = fft.fft(data)
+            self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
+            self.fft_ampl = np.abs(spectrum)
+
+            # Apply a band-pass Butterworth filter that leaves only the frequency range
+            # where the ENF is expected:
+            print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
+            data = butter_bandpass_filter(data, locut, hicut, self.fs, 10)
+            ret = enf_series(data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
+            enf = ret['enf']
+
+        if enf is not None:
+            # Convert into np.array for uniformness
+            self.enf = np.array(enf)
+        else:
+            self.enf = None
+
+        # Spectrum must be two1-dimensional arrays
+        assert type(self.fft_freq) == np.ndarray and len(np.shape(self.fft_freq)) == 1
+        assert type(self.fft_ampl) == np.ndarray and len(np.shape(self.fft_ampl)) == 1
+
+        assert self.enf is None or (type(self.enf) == np.ndarray and len(np.shape(self.enf)) == 1)
+        return self.enf is not None
+
+
+    def makeFFT_unused(self):
+        """ Compute the spectrum of the original audio recording.
+
+        :param: self.data: sample data of the audio file
+        :param: self.fs: sample frequency
+        :returns: Tuple (frequencies, amplitudes)
+        """
+        # https://docs.scipy.org/doc/scipy/tutorial/fft.html#d-discrete-fourier-transforms
+        # Result is complex.
+        assert(self.data is not None)
+
+        spectrum = fft.fft(self.data)
+        self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
+        self.fft_ampl = np.abs(spectrum)
+
+        return self.fft_freq, self.fft_ampl
+
+
+    def plotENFsmoothed(self):
+        self.ENFscurve.setData([], [])
+        if self.enfs is not None:
+            timestamps = list(range(self._timestamp, self._timestamp + len(self.enfs)))
+            self.ENFscurve.setData(timestamps, self.enfs)
+
+
+    def plotSpectrum(self):
+
+        assert self.fft_ampl is not None and self.fft_freq is not None
+        self.spectrumCurve.setData([])
+        self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)
+
+
+    def getDuration(self):
+        return self.clip_len_s
+
+
+    def setENFRegion(self, region: tuple):
+        """Set a region of interest for the ENF values. Only ENF values inside
+        this region will be used during the matching process.
+
+        :param region: Tuple (lower limit, upper limit). Both values are
+        timestamps as seen by the plot widget.
+
+        """
+        self.region = (int(region[0]) - self._timestamp,
+                       int(region[1]) - self._timestamp)
+        print("setENFRegion:", self.region)
+
+
+    def getENFRegion(self):
+        """It is an error to query the region before it has been set with setENFRegion()."""
+        rgn = (self.region[0] + self._timestamp,
+               self.region[1] + self._timestamp)
+        return rgn
+
+
+    def getFrameRate(self):
+        return self.frame_rate
+
+    def getVideoFormat(self):
+        return f"{self.width}x{self.height}"
+
+    def fileLoaded(self):
+        return self.data is not None
+
+    def clearSmoothedENF(self):
+        self.enfs = None
