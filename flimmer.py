@@ -101,6 +101,10 @@ class FlimmerView(QMainWindow):
         self.__createMenu()
         self.__loadSettings()
 
+        # Trick to enable / disable the widgets related to the video
+        # processing mode.
+        self.__adjustVideoModeWidgets()
+
 
     def __loadSettings(self):
         finfo = QFileInfo(self.__qsettings.fileName())
@@ -256,86 +260,6 @@ class FlimmerView(QMainWindow):
         analyse_area.setColumnStretch(7, 1)
 
         return analyse_group
-
-
-    def __createAnalyseCommon_unused(self):
-        # Widgets in the first row with common elements
-        analyse_group_common = QGroupBox("Common parameters")
-        analyse_area_common = QGridLayout()
-        analyse_group_common.setLayout(analyse_area_common)
-        analyse_area_common.addWidget(QLabel("Grid freq"), 0, 1)
-        self.b_nominal_freq = QComboBox(objectName='grid-freq')
-        self.b_nominal_freq.addItems(("50", "60"))
-        self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
-                                       " 50 Hz in most countries.")
-        analyse_area_common.addWidget(self.b_nominal_freq, 0, 2)
-        analyse_area_common.addWidget(QLabel("Band width"), 0, 3)
-        self.b_band_size = QSpinBox(objectName='bandwidth')
-        self.b_band_size.setRange(0, 1000)
-        self.b_band_size.setValue(200)
-        self.b_band_size.setMinimumWidth(100)
-        self.b_band_size.setSuffix(" mHz")
-        analyse_area_common.addWidget(self.b_band_size, 0, 4)
-        analyse_area_common.setColumnStretch(5, 1)
-
-        return analyse_group_common
-
-
-    def __createAnalyseRSGroup_unused(self):
-        self.analyse_rs_group = QGroupBox("Rolling Shutter", checkable=True, objectName="Rolling-shutter")
-        self.analyse_rs_group.clicked.connect(self.__onAnalyseRSClicked)
-        analyse_rs_area = QGridLayout()
-        self.analyse_rs_group.setLayout(analyse_rs_area)
-
-        analyse_rs_area.addWidget(QLabel("Alias freq."), 0, 0)
-        self.cb_aliasFreq = QComboBox()
-        analyse_rs_area.addWidget(self.cb_aliasFreq, 0, 1)
-
-        analyse_rs_area.addWidget(QLabel("Notch filter qual."), 0, 2)
-        self.sp_notchFilterQual = QSpinBox(objectName="notchfilter-quality")
-        self.sp_notchFilterQual.setValue(10)
-        self.sp_notchFilterQual.setToolTip("Quality of notch filter; 0 for no filter")
-        analyse_rs_area.addWidget(self.sp_notchFilterQual, 0, 3)
-        analyse_rs_area.setColumnStretch(4, 1)
-        return self.analyse_rs_group
-
-    def __createAnalyseGridROIGroup_unused(self):
-        self.analyse_groi_group = QGroupBox("Grid ROI", checkable=True, objectName="GridROI")
-        self.analyse_groi_group.clicked.connect(self.__onAnalyseGridROIClicked)
-        analyse_groi_area = QGridLayout()
-        self.analyse_groi_group.setLayout(analyse_groi_area)
-        analyse_groi_area.addWidget(QLabel("Vertical"), 0, 0)
-        self.sp_vert = QSpinBox(objectName="gridroi-vertical")
-        self.sp_vert.setRange(1, 10)
-        analyse_groi_area.addWidget(self.sp_vert, 0, 1)
-        analyse_groi_area.addWidget(QLabel("Horizontal"), 0, 2)
-        self.sp_horiz = QSpinBox(objectName="gridroi-horizontal")
-        self.sp_horiz.setRange(1, 10)
-        analyse_groi_area.addWidget(self.sp_horiz, 0, 3)
-        analyse_groi_area.setColumnStretch(4, 1)
-
-        return self.analyse_groi_group
-
-
-    def __createAnalyseOutliers_unused(self):
-        analyse_outliers_group = QGroupBox("Outlier treatment")
-        analyse_area_outliers = QGridLayout()
-        analyse_outliers_group.setLayout(analyse_area_outliers)
-
-        self.c_rem_outliers = QCheckBox("Remove outliers")
-        analyse_area_outliers.addWidget(self.c_rem_outliers, 0, 0)
-        analyse_area_outliers.addWidget(QLabel("Threshold"), 0, 1)
-        self.sp_Outlier_Threshold = QDoubleSpinBox(self)
-        self.sp_Outlier_Threshold.setValue(3)
-        self.sp_Outlier_Threshold.setToolTip("Factor defining which ENF values shall be considered invalid outliers")
-        analyse_area_outliers.addWidget(self.sp_Outlier_Threshold,0, 2)
-        analyse_area_outliers.addWidget(QLabel("Window"), 0, 3)
-        self.sp_window = QSpinBox()
-        self.sp_window.setValue(5)
-        analyse_area_outliers.addWidget(self.sp_window,0, 4)
-        analyse_area_outliers.setColumnStretch(5, 1)
-
-        return analyse_outliers_group
 
 
     def __createGridAreaWidgets(self):
@@ -655,12 +579,26 @@ class FlimmerView(QMainWindow):
         self.__setButtonStatus()
 
 
+    def __adjustVideoModeWidgets(self):
+
+        s = self.b_rolling_shutter.isChecked()
+        self.sp_readOutTime.setEnabled(s)
+        self.sp_horiz.setEnabled(not s)
+        self.sp_vert.setEnabled(not s)
+
+        s = self.b_grid_roi.isChecked()
+        self.sp_readOutTime.setEnabled(not s)
+        self.sp_horiz.setEnabled(s)
+        self.sp_vert.setEnabled(s)
+
+
     @pyqtSlot()
     def __onAnalyseRSClicked(self):
         """Radio button clicked."""
         print("__onAnalyseRSClicked()")
         s = self.b_rolling_shutter.isChecked()
         self.b_grid_roi.setChecked(not s)
+        self.__adjustVideoModeWidgets()
 
 
     @pyqtSlot()
@@ -669,6 +607,7 @@ class FlimmerView(QMainWindow):
         print("__onAnalyseGridROIClicked()")
         s = self.b_grid_roi.isChecked()
         self.b_rolling_shutter.setChecked(not s)
+        self.__adjustVideoModeWidgets()
 
 
     @pyqtSlot()

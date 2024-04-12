@@ -132,7 +132,7 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
             'tablew': t,
             'Zxx': Zxx,
         },
-        'enf': if Zxx is not None: [f/float(harmonic_n) for f in max_freqs],
+        'enf': [f/float(harmonic_n) for f in max_freqs],
     }
 
 
