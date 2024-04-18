@@ -1,4 +1,8 @@
 #
+# flimmer.py: Extract ENF components from video recordings and match them
+# against databases of historical grid frequency deviations.
+#
+# Copyright (C) 2024 conrad.roeber@mailbox.org
 #
 
 import sys
@@ -9,7 +13,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QComboBox, QSpinBox, QTabWidget, QDoubleSpinBox,
                              QMenuBar, QAction, QDialog, QMessageBox,
                              QDialogButtonBox, QProgressDialog)
-from PyQt5.Qt import Qt, QSettings, QFileInfo, QHBoxLayout, QRadioButton
+from PyQt5.Qt import Qt, QSettings, QFileInfo, QRadioButton
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 import datetime
@@ -223,24 +227,35 @@ class FlimmerView(QMainWindow):
         #analyse_area.addWidget(self.__createAnalyseGridROIGroup())
         #analyse_area.addWidget(self.__createAnalyseOutliers())
 
-        analyse_area.addWidget(QLabel("Grid freq"), 0, 1)
+        analyse_area.addWidget(QLabel("Grid freq"), 0, 0)
         self.b_nominal_freq = QComboBox(objectName='grid-freq')
         self.b_nominal_freq.addItems(("50", "60"))
         self.b_nominal_freq.setToolTip("The nominal frequency of the power grid at the place of the recording;"
                                        " 50 Hz in most countries.")
-        analyse_area.addWidget(self.b_nominal_freq, 0, 2)
-        analyse_area.addWidget(QLabel("Alias freq."), 0, 3)
-        self.cb_aliasFreq = QComboBox()
-        analyse_area.addWidget(self.cb_aliasFreq, 0, 4)
-        analyse_area.addWidget(QLabel("Band width"), 0, 5)
+        analyse_area.addWidget(self.b_nominal_freq, 0, 1)
+        analyse_area.addWidget(QLabel("Harmonic"), 0, 2)
+        self.cb_gridHarmonic = QComboBox(objectName="Grid-Harmonic")
+        self.cb_gridHarmonic.addItems(("1", "2", "3"))
+        self.cb_gridHarmonic.currentIndexChanged.connect(self.__setAliasFreq)
+        analyse_area.addWidget(self.cb_gridHarmonic, 0, 3)
+        analyse_area.addWidget(QLabel("Vid. harmonic"), 0, 4)
+        self.cb_enfHarmonic = QComboBox(objectName="Vid-Frame-Harmonics")
+        self.cb_enfHarmonic.addItems(("-3", "-2", "-1", "1", "2", "3"))
+        self.cb_enfHarmonic.currentIndexChanged.connect(self.__setAliasFreq)
+        analyse_area.addWidget(self.cb_enfHarmonic, 0, 5)
+        analyse_area.addWidget(QLabel("Alias freq."), 0, 6)
+        self.le_aliasFreq = QLineEdit()
+        analyse_area.addWidget(self.le_aliasFreq, 0, 7)
+        self.le_aliasFreq.setEnabled(False)
+        analyse_area.addWidget(QLabel("Band width"), 0, 8)
         self.b_band_size = QSpinBox(objectName='bandwidth')
         self.b_band_size.setRange(0, 1000)
         self.b_band_size.setValue(200)
         self.b_band_size.setMinimumWidth(100)
         self.b_band_size.setSuffix(" mHz")
-        analyse_area.addWidget(self.b_band_size, 0, 6)
+        analyse_area.addWidget(self.b_band_size, 0, 9)
 
-        self.c_rem_outliers = QCheckBox("Remove outliers")
+        self.c_rem_outliers = QCheckBox("Rm. outliers")
         analyse_area.addWidget(self.c_rem_outliers, 1, 0)
         analyse_area.addWidget(QLabel("Threshold"), 1, 1)
         self.sp_Outlier_Threshold = QDoubleSpinBox(self)
@@ -257,7 +272,7 @@ class FlimmerView(QMainWindow):
         self.b_analyse.clicked.connect(self.__onAnalyseClicked)
         analyse_area.addWidget(self.b_analyse, 2, 0)
 
-        analyse_area.setColumnStretch(7, 1)
+        analyse_area.setColumnStretch(10, 1)
 
         return analyse_group
 
@@ -517,8 +532,7 @@ class FlimmerView(QMainWindow):
                                                   self.sp_vert.value(), self.sp_horiz.value())
                 else:
                     self.clip.loadVideoFileRollingShutter(fileName, self.sp_readOutTime.value())
-                self.cb_aliasFreq.clear()
-                self.cb_aliasFreq.addItems(self.clip.aliasFreqs(int(self.b_nominal_freq.currentText())))
+                self.__setAliasFreq()
 
                 # Clear all clip-related plots and the region
                 if self.enfAudioCurveRegion:
@@ -543,8 +557,10 @@ class FlimmerView(QMainWindow):
         self.setCursor(Qt.WaitCursor)
 
         self.clip.makeEnf(int(self.b_nominal_freq.currentText()),
-            int(self.cb_aliasFreq.currentText()),
+            int(self.le_aliasFreq.text()),
+            int(self.cb_gridHarmonic.currentText()),
             float(self.b_band_size.value()/1000),
+            int(self.cb_enfHarmonic.currentText()),
             30)
 
         if self.c_rem_outliers.isChecked():
@@ -608,6 +624,19 @@ class FlimmerView(QMainWindow):
         s = self.b_grid_roi.isChecked()
         self.b_rolling_shutter.setChecked(not s)
         self.__adjustVideoModeWidgets()
+
+
+    def __setAliasFreq(self):
+        """Set the alias frequency of the text field.
+        """
+        if self.clip is not None:
+            gh = int(self.cb_gridHarmonic.currentText())
+            vh = int(self.cb_enfHarmonic.currentText())
+            grid_freq = int(self.b_nominal_freq.currentText())
+            a = self.clip.aliasFreqs(grid_freq, gh, vh)
+            self.le_aliasFreq.setText(str(a))
+        else:
+            self.le_aliasFreq.setText("")
 
 
     @pyqtSlot()
@@ -842,17 +871,8 @@ class FlimmerView(QMainWindow):
         #print(f"__matchingProgress: {value}")
 
 
-    def __setButtonStatus_unused(self):
-        """ Enables or disables buttons depending on the clip status."""
-        audioDataLoaded = self.clip is not None and self.clip.fileLoaded()
-        audioEnfLoaded = self.clip is not None and self.clip.ENFavailable()
-        gridEnfLoaded = self.grid is not None and self.grid.ENFavailable()
-
-        self.b_analyse.setEnabled(audioDataLoaded)
-        self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
-
-
     def closeEvent(self, event):
+        """Called when the main window is closed."""
         self.__saveSettings()
         super().closeEvent(event)
 
