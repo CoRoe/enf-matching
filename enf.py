@@ -70,7 +70,7 @@ def stft(data, fs):
     return f, t, Zxx
 
 
-def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
+def enf_series_unused(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
     """Extracts a series of ENF values from `data`, one per second.
 
     :param data: list of signal sample amplitudes
@@ -97,6 +97,11 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
 
     def quadratic_interpolation(data, max_idx, bin_size):
         """
+        :param data: Array of input data
+        :param max_idx: Index into data
+        :param bin_size:
+        :returns:
+
         https://ccrma.stanford.edu/~jos/sasp/Quadratic_Interpolation_Spectral_Peaks.html
         """
         left = data[max_idx - 1]
@@ -134,6 +139,63 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
         },
         'enf': [f/float(harmonic_n) for f in max_freqs],
     }
+
+
+def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
+    """Extracts a series of ENF values from `data`, one per second.
+
+    :param data: list of signal sample amplitudes
+    :param fs: the sample rate
+    :param nominal_freq: the nominal ENF (in Hz) to look near
+    :param freq_band_size: the size of the band around the nominal value in which to look for the ENF
+    :param harmonic_n: the harmonic number to look for
+    :returns: a list of ENF values, one per second or None on error
+    """
+
+    # TODO: Return a numpy array for performance
+    print(f"enf_series: sample freq={fs}, nom. freq={nominal_freq}, freq band={freq_band_size}, harmonic={harmonic_n}")
+    # downsampled_data, downsampled_fs = downsample(data, fs, 300)
+    downsampled_data, downsampled_fs = (data, fs)
+
+    # print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={downsampled_fs}, order=10")
+    # filtered_data = butter_bandpass_filter(downsampled_data, locut, hicut,
+    #                                       downsampled_fs, order=10)
+
+    f, t, Zxx = stft(downsampled_data, downsampled_fs)
+
+    def quadratic_interpolation(data, max_idx, bin_size):
+        """
+        :param data: Array of input data
+        :param max_idx: Index into data
+        :param bin_size:
+        :returns:
+
+        https://ccrma.stanford.edu/~jos/sasp/Quadratic_Interpolation_Spectral_Peaks.html
+        """
+        left = data[max_idx - 1]
+        center = data[max_idx]
+        right = data[max_idx + 1]
+
+        p = 0.5 * (left - right) / (left - 2 * center + right)
+        interpolated = (max_idx + p) * bin_size
+
+        return interpolated
+
+    if Zxx is not None:
+        bin_size = f[1] - f[0]
+
+        max_freqs = []
+        for spectrum in np.abs(np.transpose(Zxx)):
+            max_amp = np.amax(spectrum)
+            max_freq_idx = np.where(spectrum == max_amp)[0][0]
+
+            max_freq = quadratic_interpolation(spectrum, max_freq_idx, bin_size)
+            max_freqs.append(max_freq)
+
+        enf = [f/float(harmonic_n) for f in max_freqs]
+        return enf
+    else:
+        return None
 
 
 class Enf:
@@ -252,7 +314,8 @@ class Enf:
         # self.stft = enf_output['stft']
 
         # ENF are the ENF values
-        enf = [int(e * 1000) for e in enf_output['enf']]
+        # TODO: Use array multiplication
+        enf = [int(e * 1000) for e in enf_output]
         self.enf = np.array(enf)
         assert type(self.enf) == np.ndarray
 
@@ -267,6 +330,49 @@ class Enf:
         self.ENFcurve.setData([], [])
         timestamps = list(range(self._timestamp, self._timestamp + len(self.enf)))
         self.ENFcurve.setData(timestamps, self.enf)
+
+
+    def outlierSmoother(self, threshold, win):
+        """Find outliers in the ENF values replace them with the median of
+        neighbouring values.
+
+        :param threshold: Values with threshold times the median deviation are
+        smoothed
+
+        :param win:
+        :param self.enf: ENF data generated previous step
+        :param self.enfs: Smoothed ENF data
+        """
+        x_corr = np.copy(self.enf)
+        d = np.abs(self.enf - np.median(self.enf))
+        mdev = np.median(d)
+        print(f"Deviation median: {mdev}")
+        idxs_outliers = np.nonzero(d > threshold * mdev)[0]
+        for i in idxs_outliers:
+            if i - win < 0:
+                x_corr[i] = np.median(
+                    np.append(self.enf[0:i], self.enf[i + 1 : i + win + 1])
+                )
+            elif i + win + 1 > len(self.enf):
+                x_corr[i] = np.median(
+                    np.append(self.enf[i - win : i], self.enf[i + 1 : len(self.enf)])
+                )
+            else:
+                x_corr[i] = np.median(
+                    np.append(self.enf[i - win : i], self.enf[i + 1 : i + win + 1])
+                )
+        self.enfs = x_corr
+
+
+    def clearSmoothedENF(self):
+        self.enfs = None
+
+
+    def plotENFsmoothed(self):
+        self.ENFscurve.setData([], [])
+        if self.enfs is not None:
+            timestamps = list(range(self._timestamp, self._timestamp + len(self.enfs)))
+            self.ENFscurve.setData(timestamps, self.enfs)
 
 
     def getTimestamp(self):
@@ -617,8 +723,9 @@ class AudioClipEnf(Enf):
         # self.stft = enf_output['stft']
 
         # ENF are the ENF values
+        # TODO: Use array multiplication
         if enf_output['enf'] is not None:
-            enf = [int(e * 1000) for e in enf_output['enf']]
+            enf = [int(e * 1000) for e in enf_output]
             self.enf = np.array(enf)
         else:
             self.enf = None
@@ -679,49 +786,6 @@ class AudioClipEnf(Enf):
         return self.fs
 
 
-    def outlierSmoother(self, threshold, win):
-        """Find outliers in the ENF values replace them with the median of
-        neighbouring values.
-
-        :param threshold: Values with threshold times the median deviation are
-        smoothed
-
-        :param win:
-        :param self.enf: ENF data generated previous step
-        :param self.enfs: Smoothed ENF data
-        """
-        x_corr = np.copy(self.enf)
-        d = np.abs(self.enf - np.median(self.enf))
-        mdev = np.median(d)
-        print(f"Deviation median: {mdev}")
-        idxs_outliers = np.nonzero(d > threshold * mdev)[0]
-        for i in idxs_outliers:
-            if i - win < 0:
-                x_corr[i] = np.median(
-                    np.append(self.enf[0:i], self.enf[i + 1 : i + win + 1])
-                )
-            elif i + win + 1 > len(self.enf):
-                x_corr[i] = np.median(
-                    np.append(self.enf[i - win : i], self.enf[i + 1 : len(self.enf)])
-                )
-            else:
-                x_corr[i] = np.median(
-                    np.append(self.enf[i - win : i], self.enf[i + 1 : i + win + 1])
-                )
-        self.enfs = x_corr
-
-
-    def clearSmoothedENF(self):
-        self.enfs = None
-
-
-    def plotENFsmoothed(self):
-        self.ENFscurve.setData([], [])
-        if self.enfs is not None:
-            timestamps = list(range(self._timestamp, self._timestamp + len(self.enfs)))
-            self.ENFscurve.setData(timestamps, self.enfs)
-
-
     def plotSpectrum(self):
 
         assert self.fft_ampl is not None and self.fft_freq is not None
@@ -778,19 +842,27 @@ class VideoClipEnf(Enf):
             return None
 
 
-    def aliasFreqs(self, gridFreq):
-        """ Compute a list of all alias frequencies resulting from grid and image frame frequencies.
-
-        :param gridFreq: The nominal grid frequency; usually 50 or 60 Hz
-        :param self.frame_rate. The frame frequency of the video clip; often 24 or 30 frames
-        per second.
-        :returns: List of strings with the alias frequencies.
+    def aliasFreqs(self, gridFreq, gridHarmonic, vidFrameHarmonic):
+        """Given the nominal grid frequency, the harmonic of the grid frequency, the
+        video frame rate, and the video frame rate harmonic compute the alias frequency.
         """
-        aliases = set([i * gridFreq + k * self.frame_rate for i in range(2, 6, 2) for k in range(-5, 5)])
-        aliases = sorted(list(aliases))
+        assert self.__method in (VideoClipEnf.method_gridroi, VideoClipEnf.method_rs)
 
-        # Remove frequencies that are non-positive and convert to strings
-        return [str(a) for a in sorted(list(aliases)) if a > 0 and a < 400]
+        f = gridFreq * gridHarmonic + self.frame_rate * vidFrameHarmonic
+        if self.__method == VideoClipEnf.method_gridroi:
+            if f > self.frame_rate // 2:
+                # Illegal combination
+                f = None
+        else:
+            if f > self.fs // 2:
+                f = None
+        return f
+
+
+    def checkAliasFreqs(self, gridFreq, gridHarmonic, vidFrameHarmonic):
+        """Determine if the combination of ... is legal.
+        The alias frequency must be lower than half the sampling frequency.
+        """
 
 
     def loadVideoFileRollingShutter(self, filename, readout_time):
@@ -935,7 +1007,8 @@ class VideoClipEnf(Enf):
 
 
 
-    def makeEnf(self, grid_freq, nominal_freq: int, freq_band_size, notchf_qual=0):
+    def makeEnf(self, grid_freq, nominal_freq: int, grid_harmonic, freq_band_size, vid_harmonic,
+                notchf_qual=0):
         """Extract an ENF time series from a video signal.
 
         :param nominal_freq: The frequency where ENF deviations are expected.
@@ -959,6 +1032,7 @@ class VideoClipEnf(Enf):
         print(f"makeEnf: method is {self.__method}")
         print(f"makeEnf: grid_freq={grid_freq}, nominal_freq={nominal_freq}, freq band:{freq_band_size}")
 
+        # TODO: Use parameter vid_harmonic
         assert self.__method in (VideoClipEnf.method_rs, VideoClipEnf.method_gridroi)
         data = self.data
 
@@ -968,8 +1042,8 @@ class VideoClipEnf(Enf):
             self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
             self.fft_ampl = np.abs(spectrum)
 
-            locut = nominal_freq - freq_band_size
-            hicut = nominal_freq + freq_band_size
+            locut = nominal_freq
+            hicut = nominal_freq
 
             # Apply notch filter that removes any signal components of the frame rate
             # and its harmonics.
@@ -980,8 +1054,7 @@ class VideoClipEnf(Enf):
             # where the ENF is expected:
             print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
             data = butter_bandpass_filter(data, locut, hicut, self.fs, 10)
-            ret = enf_series(data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
-            enf = ret['enf']
+            enf = enf_series(data, self.fs, nominal_freq, freq_band_size, harmonic_n=grid_harmonic)
 
         elif self.__method == VideoClipEnf.method_gridroi:
             locut = nominal_freq - freq_band_size
@@ -999,12 +1072,12 @@ class VideoClipEnf(Enf):
             # where the ENF is expected:
             print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
             data = butter_bandpass_filter(data, locut, hicut, self.fs, 10)
-            ret = enf_series(data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
-            enf = ret['enf']
+            enf = enf_series(data, self.fs, nominal_freq, freq_band_size, harmonic_n=1)
 
         if enf is not None:
             # Convert into np.array for uniformness
-            self.enf = np.array(enf)
+            # enf = (nominal_freq - enf) / vid_harmonic + nominal_freq
+            self.enf = (nominal_freq - np.array(enf)) + grid_freq
         else:
             self.enf = None
 
@@ -1014,24 +1087,6 @@ class VideoClipEnf(Enf):
 
         assert self.enf is None or (type(self.enf) == np.ndarray and len(np.shape(self.enf)) == 1)
         return self.enf is not None
-
-
-    def makeFFT_unused(self):
-        """ Compute the spectrum of the original audio recording.
-
-        :param: self.data: sample data of the audio file
-        :param: self.fs: sample frequency
-        :returns: Tuple (frequencies, amplitudes)
-        """
-        # https://docs.scipy.org/doc/scipy/tutorial/fft.html#d-discrete-fourier-transforms
-        # Result is complex.
-        assert(self.data is not None)
-
-        spectrum = fft.fft(self.data)
-        self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
-        self.fft_ampl = np.abs(spectrum)
-
-        return self.fft_freq, self.fft_ampl
 
 
     def plotENFsmoothed(self):

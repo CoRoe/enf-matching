@@ -236,12 +236,12 @@ class FlimmerView(QMainWindow):
         analyse_area.addWidget(QLabel("Harmonic"), 0, 2)
         self.cb_gridHarmonic = QComboBox(objectName="Grid-Harmonic")
         self.cb_gridHarmonic.addItems(("1", "2", "3"))
-        self.cb_gridHarmonic.currentIndexChanged.connect(self.__setAliasFreq)
+        self.cb_gridHarmonic.currentIndexChanged.connect(self.__setButtonStatus)
         analyse_area.addWidget(self.cb_gridHarmonic, 0, 3)
         analyse_area.addWidget(QLabel("Vid. harmonic"), 0, 4)
         self.cb_enfHarmonic = QComboBox(objectName="Vid-Frame-Harmonics")
         self.cb_enfHarmonic.addItems(("-3", "-2", "-1", "1", "2", "3"))
-        self.cb_enfHarmonic.currentIndexChanged.connect(self.__setAliasFreq)
+        self.cb_enfHarmonic.currentIndexChanged.connect(self.__setButtonStatus)
         analyse_area.addWidget(self.cb_enfHarmonic, 0, 5)
         analyse_area.addWidget(QLabel("Alias freq."), 0, 6)
         self.le_aliasFreq = QLineEdit()
@@ -497,14 +497,47 @@ class FlimmerView(QMainWindow):
         self.unsetCursor()
 
 
+    @pyqtSlot()
     def __setButtonStatus(self):
-        """ Enables or disables buttons depending on the clip status."""
+        """Enable or disable buttons depending on the clip status and alias frequency settings."""
+
+        if self.clip is not None:
+            gh = int(self.cb_gridHarmonic.currentText())
+            vh = int(self.cb_enfHarmonic.currentText())
+            grid_freq = int(self.b_nominal_freq.currentText())
+            aliasFreq = self.clip.aliasFreqs(grid_freq, gh, vh)
+            if aliasFreq is None:
+                self.le_aliasFreq.setText('Invalid')
+            else:
+                self.le_aliasFreq.setText(str(aliasFreq))
+        else:
+            aliasFreq = None
+            self.le_aliasFreq.setText("")
+
         audioDataLoaded = self.clip is not None and self.clip.fileLoaded()
         audioEnfLoaded = self.clip is not None and self.clip.ENFavailable()
         gridEnfLoaded = self.grid is not None and self.grid.ENFavailable()
 
-        self.b_analyse.setEnabled(audioDataLoaded)
+        self.b_analyse.setEnabled(audioDataLoaded and aliasFreq is not None)
         self.b_match.setEnabled(audioEnfLoaded and gridEnfLoaded)
+
+
+    @pyqtSlot()
+    def __onAnalyseRSClicked(self):
+        """Radio button clicked."""
+        print("__onAnalyseRSClicked()")
+        s = self.b_rolling_shutter.isChecked()
+        self.b_grid_roi.setChecked(not s)
+        self.__adjustVideoModeWidgets()
+
+
+    @pyqtSlot()
+    def __onAnalyseGridROIClicked(self):
+        """Radio button clicked."""
+        print("__onAnalyseGridROIClicked()")
+        s = self.b_grid_roi.isChecked()
+        self.b_rolling_shutter.setChecked(not s)
+        self.__adjustVideoModeWidgets()
 
 
     def __onOpenFileClicked(self):
@@ -532,7 +565,7 @@ class FlimmerView(QMainWindow):
                                                   self.sp_vert.value(), self.sp_horiz.value())
                 else:
                     self.clip.loadVideoFileRollingShutter(fileName, self.sp_readOutTime.value())
-                self.__setAliasFreq()
+                self.__setButtonStatus()
 
                 # Clear all clip-related plots and the region
                 if self.enfAudioCurveRegion:
@@ -606,37 +639,6 @@ class FlimmerView(QMainWindow):
         self.sp_readOutTime.setEnabled(not s)
         self.sp_horiz.setEnabled(s)
         self.sp_vert.setEnabled(s)
-
-
-    @pyqtSlot()
-    def __onAnalyseRSClicked(self):
-        """Radio button clicked."""
-        print("__onAnalyseRSClicked()")
-        s = self.b_rolling_shutter.isChecked()
-        self.b_grid_roi.setChecked(not s)
-        self.__adjustVideoModeWidgets()
-
-
-    @pyqtSlot()
-    def __onAnalyseGridROIClicked(self):
-        """Radio button clicked."""
-        print("__onAnalyseGridROIClicked()")
-        s = self.b_grid_roi.isChecked()
-        self.b_rolling_shutter.setChecked(not s)
-        self.__adjustVideoModeWidgets()
-
-
-    def __setAliasFreq(self):
-        """Set the alias frequency of the text field.
-        """
-        if self.clip is not None:
-            gh = int(self.cb_gridHarmonic.currentText())
-            vh = int(self.cb_enfHarmonic.currentText())
-            grid_freq = int(self.b_nominal_freq.currentText())
-            a = self.clip.aliasFreqs(grid_freq, gh, vh)
-            self.le_aliasFreq.setText(str(a))
-        else:
-            self.le_aliasFreq.setText("")
 
 
     @pyqtSlot()
