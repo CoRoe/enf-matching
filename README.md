@@ -7,7 +7,7 @@ ENF history provided by power grid operators.
 The two applications `hum,py` and `flimmer.py` share a lot of code, and I may
 later merge them into a single application.
 
-## Analysis of Audio Clips: hump.py
+## Analysis of Audio Clips: hum.py
 
 GUI application that reuses tome of the signal processing from example code
 from Robert Heaton on [github](https://github.com/robert/enf-matching).
@@ -56,14 +56,6 @@ In order to run the test case:
 
   The diagram shows a good match between the ENF pattern in the audio clip and
   the (test) grid ENF.
-
-### Testing
-
-There a some unit test cases for `griddata.py`. To run them:
-
-```
-pytest-3 test.py
-```
 
 ### Design Details
 
@@ -122,18 +114,22 @@ in https://github.com/CoRoe/enf-matching/blob/main/bin/download-example-files.
 
 ## Analysis of Video Clips: Flimmer.py
 
+Flimmer offers two analysis modes: One for videos recorded with a camera that
+has a *global shutter* and one for *rolling shutter* cameras. The mode has to
+be chosen before actually loading the video clip.
+
 The algorithm assumes that the video has been recorded with a rolling shutter
 camera; this should be the case for most smartphone cameras. For details see
 for instance
 https://www.mdpi.com/2076-3417/13/8/5039. https://www.photometrics.com/learn/white-papers/rolling-vs-global-shutter
 explains the difference between *rolling* and *global* shutter.
 
-### Design Details
+### Rolling Shutter
 
 `flimmer.py` uses `ffmpeg` to transform a compressed video file into a raw
-video file with only the luminance component retained. The file contains one
+format with only the luminance component retained. The file contains one
 byte per pixel, so -- for instance a video with 1080 x 1920 resolution there
-are 2,073,600 bytes per video frame (to be confirmed).
+are 2,073,600 bytes per video frame.
 
 The rolling shutter mechanism introduces alias frequencies because the camera
 frame rate (for instance 30 or 24 frames per second) combines with the grid
@@ -169,6 +165,45 @@ grid frequency of harmonics thereof while in the video / rolling shutter case
 the frequencies of interest are the alias frequencies grid frequency -- camera
 frame rate.
 
+### Global Shutter
+
+In a camera with a global shutter, all pixels of the camera sensor are exposed
+at the same time and then read out sequentially.
+
+Flimmer attempts to look for the ENF signals in 'steady' image areas. This is
+implemented as follows:
+
+When reading a video file, `flimmer` divides each frame into rectangles of
+equal size; the number of rows and columns can be set in the GUI. Default is a
+grid of 10 x 10 rectangles. Assuming a resolution of 1080x1920, each rectangle
+is 108 pixels high and 192 pixels wide. Flimmer computes for each rectangle of
+the frame its average luminosity and appaned it to a time series.
+
+So staying with the example of 10 x 10 rectangles (Regions of Interest, ROI),
+there will be 100 video data streams. When the 'analysis' button is pressed,
+flimmer choses the stream with the lowest variation and analyses it
+further. The signal is passed through a notch filter that removes the frame
+frequency and its harmonics. After that, a bandpass is applied and the signal
+is processed using STFT.
+
+Alias frequencies: Light bulbs an fluorescent lamps emit light during both the
+positive and negative part of the grid sine wave; the basic frequency is thus
+twice the grid frequency. The 'harmonic' setting in the GUI should therefore
+be 2.
+
+Assume a frame rate of 30 Hz (frames per second). This is the sample rate in
+the *global shutter* mode. Because of the sampling process, alias frequencies
+are introduced; their values are
+
+$$n f_g + m f_s$$
+
+where $n$ is the harmonic of the grid frequency, $f_g$ is the grid frequency,
+$m$ is the harmonic of the frame rate, and $f_s$ is the frame rate. $n$ and
+$m$ are small integer numbers.
+
+An example: Grid frequency 50 Hz, harmonic 2, frame rate 30 fps, harmonic -3:
+2 * 50 - 3 * 30 = 10.
+
 ### Usage
 
 The usage is similar to that of `hum.py`: You work from top to bottom.
@@ -178,15 +213,27 @@ The following parameters have to be chosen:
 | Parameter            | Meaning                                                                                       |
 |----------------------|-----------------------------------------------------------------------------------------------|
 | Sensor read-out time | Time in milliseconds to transfer pixel data from sensor ro CPU; 30 ms may be a starting point |
+| # Grid rows          | Number of columns of rectangles                                                               |
+| # Grid columns       | Number of rows of rectangles                                                                  |
 | Grid freq            | Grid frequency in Hz                                                                          |
+| Harmonic             | Harmonic of the grid frequency; usually 2                                                     |
+| Vid. harmonic        | Harmonic of video frame rate; usually -3                                                      |
 | Band width           | Bandwidth of the expected ENF signal                                                          |
 | Alias freq           | Combination of frame frequency and grid frequency where the ENF signal is expected            |
 | Notch filter qual.   | Quality of the notch filter that removes image content that cannot be ENF. 0 disables filter. |
-
+|                      |                                                                                               |
 
 ### Status
 
-Very early stage.
+Frequency changes in test video clip are recognised.
+
+## Testing
+
+There a some unit test cases for `griddata.py`. To run them:
+
+```
+pytest-3 test.py
+```
 
 ## See also
 
