@@ -114,9 +114,9 @@ in https://github.com/CoRoe/enf-matching/blob/main/bin/download-example-files.
 
 ## Analysis of Video Clips: Flimmer.py
 
-Flimmer offers two analysis modes: One for videos recorded with a camera that
-has a *global shutter* and one for *rolling shutter* cameras. The mode has to
-be chosen before actually loading the video clip.
+`Flimmer` offers two analysis modes: One for videos recorded with a camera
+that has a *global shutter* and one for *rolling shutter* cameras. The mode
+has to be chosen before actually loading the video clip.
 
 The algorithm assumes that the video has been recorded with a rolling shutter
 camera; this should be the case for most smartphone cameras. For details see
@@ -161,39 +161,43 @@ because it more intuitive than e.g. the idle time.
 After `flimmer.py` has converted the video stream into a time series of
 luminance data, processing is similar to the processing of audio
 recordings. The difference is that in the audio case, one has to check for the
-grid frequency of harmonics thereof while in the video / rolling shutter case
-the frequencies of interest are the alias frequencies grid frequency -- camera
-frame rate.
+grid frequency or harmonics thereof; while in the video / rolling shutter case
+the frequencies of interest are the alias frequencies created by the
+interaction of grid frequency and camera frame rate.
 
 ### Global Shutter
 
 In a camera with a global shutter, all pixels of the camera sensor are exposed
 at the same time and then read out sequentially.
 
-Flimmer attempts to look for the ENF signals in 'steady' image areas. This is
-implemented as follows:
+The effective sampling frequency is usually very low: in the range of 10 Hz
+(see the explanation below). To achieve a better SNR, `flimmer` attempts to
+look for the ENF signal in *steady* image areas. This is implemented as
+follows:
 
 When reading a video file, `flimmer` divides each frame into rectangles of
 equal size; the number of rows and columns can be set in the GUI. Default is a
-grid of 10 x 10 rectangles. Assuming a resolution of 1080x1920, each rectangle
-is 108 pixels high and 192 pixels wide. Flimmer computes for each rectangle of
-the frame its average luminosity and appaned it to a time series.
+grid of 10 x 10 rectangles. Assuming a frame resolution of 1080 x 1920, each
+rectangle is 108 pixels high and 192 pixels wide. Flimmer computes for each
+rectangle of the frame its average luminosity and appends it to a time
+series. There will thus be 100 time series of the luminance signal.
 
 So staying with the example of 10 x 10 rectangles (Regions of Interest, ROI),
-there will be 100 video data streams. When the 'analysis' button is pressed,
-flimmer choses the stream with the lowest variation and analyses it
-further. The signal is passed through a notch filter that removes the frame
-frequency and its harmonics. After that, a bandpass is applied and the signal
-is processed using STFT.
+there will be 100 video data streams. When the *analysis* button is pressed,
+`flimmer` choses the stream with the lowest variation and analyses it
+further. The chosen signal stream is passed through a notch filter that
+removes the frame frequency and its harmonics. After that, a bandpass is
+applied and the signal is processed using STFT.
 
-Alias frequencies: Light bulbs an fluorescent lamps emit light during both the
-positive and negative part of the grid sine wave; the basic frequency is thus
-twice the grid frequency. The 'harmonic' setting in the GUI should therefore
-be 2.
+Grid frequency and sampling frequency are similar; the sampling process thus
+creates alias frequencies. Light bulbs an fluorescent lamps emit light during
+both the positive and negative half of the grid voltage sine wave; the basic
+frequency is thus twice the grid frequency. The *harmonic* setting in the GUI
+should therefore be 2.
 
-Assume a frame rate of 30 Hz (frames per second). This is the sample rate in
-the *global shutter* mode. Because of the sampling process, alias frequencies
-are introduced; their values are
+Assume a frame rate of 30 Hz (frames per second). That means that the sample
+rate in the *global shutter* mode is 30 Hz. Because of the sampling process,
+alias frequencies are introduced; their values are
 
 $$n f_g + m f_s$$
 
@@ -202,7 +206,19 @@ $m$ is the harmonic of the frame rate, and $f_s$ is the frame rate. $n$ and
 $m$ are small integer numbers.
 
 An example: Grid frequency 50 Hz, harmonic 2, frame rate 30 fps, harmonic -3:
-2 * 50 - 3 * 30 = 10.
+2 * 50 - 3 * 30 = 10. So the frequency to look for is 10 Hz (shown in the
+GUI).
+
+The luminance signal before sampling is
+
+$$ \| \sin \phi \| $$
+
+which assumes value between 0 and 1. The RGB signal however can have values
+between 0 and 255 for each component. The squared sine signal is therefore
+multiplied with `contrast` factor. This factor defaults to 128, so the ENF
+signal is about 50% full scale (quite noticeable when you watch die
+video). The desired contrast can be set with the `--contrast` command line
+parameter.
 
 ### Usage
 

@@ -7,6 +7,7 @@ import numpy as np
 import subprocess
 import array as arr
 import argparse
+import matplotlib.pyplot as plt
 
 #
 # Parameters
@@ -51,9 +52,10 @@ def gen_signals(fs: int, fc: int, duration: int):
 
     # sig_mod is the ENF signal including the frequency deltas defined in
     # freq_deltas
-    sig_mod = np.abs(np.sin(phi))      # modulated signal
+    sig_mod = np.abs(np.sin(phi))      # modulated signal (absolute value of sine wave)
+    # sig_mod = 0.5 * (np.sin(phi) + 1)              # sine wave
 
-    return t, sig_mod
+    return t, sig_mod, delta_phi
 
 
 def gen_lum_signal(sig_mod, fs, fps):
@@ -71,7 +73,7 @@ def gen_lum_signal(sig_mod, fs, fps):
     lum = [np.average(sig_mod[t:t+samples_per_frame]) for t in range(0, total_samples, samples_per_frame)]
 
     assert np.shape(lum) == (total_samples // samples_per_frame, )
-    return lum
+    return np.array(lum)
 
 
 def gen_raw_video_file(lum, filename, contrast=256, speed='medium'):
@@ -103,6 +105,44 @@ def gen_raw_video_file(lum, filename, contrast=256, speed='medium'):
         print(errors)
 
 
+def plot(fs, t, delta_phi, sig_mod, lum):
+    """Plot the generated signal and its spectrum.
+
+    :param fs: The sampling frequency; depends on grid frequency and camera
+    frame rate.
+    :param t: Time series
+    :param delta_phi: time series of simulated grid frequency deviations.
+    :param sig_mode: ??
+    :param lum: Time series of luminosity a camera sensor would see
+    """
+
+    # Compute the spectrum; subtract the average to avoid a peak at
+    # a frequency of 0.
+    lum_spectrum = np.fft.fft(lum - np.mean(lum))
+    freqs = np.fft.fftfreq(len(lum), 1 / fs)
+
+    fig, (ax0, ax1, ax2) = plt.subplots(3)
+
+    ax0.plot(t, delta_phi)
+    ax0.set_title("Frequency deviation")
+    ax0.set_xlabel("Time (sec)")
+
+    ax1.plot(t[:100], lum[:100])
+    ax1.set_title("Simulated sensor signal")
+    ax1.set_xlabel("Time (sec)")
+    ax1.set_ylabel("Amplitude")
+
+    ax2.plot(freqs, lum_spectrum.real)
+    ax2.set_title("Spectrum of simulated sensor signal")
+    ax2.set_xlabel("Frequency (Hz)")
+    ax2.set_ylabel("Amplitude")
+
+    plt.tight_layout()
+    plt.show()
+    print()
+
+
+
 if __name__ == '__main__':
 
     description = """Creates a video file with an ENF signal. Some parameters are hard-coded:
@@ -112,7 +152,7 @@ if __name__ == '__main__':
         prog='fm',
         description=description
         )
-    parser.add_argument('filename', help="Name of the generated video file")
+    parser.add_argument('filename', help="Output video file")
     parser.add_argument('--fps', default=30, help="Frames per second; default is 30 fps", type=int)
     parser.add_argument('--format', default="1080x1920", help="Format of the generated video file",
                         choices=["1080x1920"])
@@ -121,10 +161,14 @@ if __name__ == '__main__':
     parser.add_argument('--contrast', default=128,
                         help="Contrast of the generated video {0..255}; default is 128",
                         type=int)
+    parser.add_argument('--plot', help="Plot spectrum instead of generating a file",
+                        action='store_true')
     args = parser.parse_args()
 
     fs = args.fps * 20
 
-    t, sig_mod = gen_signals(fs, args.grid, duration)
+    t, sig_mod, delta_phi = gen_signals(fs, args.grid, duration)
     lum = gen_lum_signal(sig_mod, fs, args.fps)
+    if args.plot:
+        plot(fs, t, delta_phi, sig_mod, lum)
     gen_raw_video_file(lum, args.filename, contrast=args.contrast)
