@@ -23,8 +23,14 @@ def gen_signals(fs: int, fc: int, duration: int):
     frequency modulated.
 
     :param fc: Nominal grid frequency
-    :param fs: Sampling frequency; must be an integer multiple of the video frame rate
+    :param fs: Sampling frequency; must be an integer multiple of the video
+    frame rate
     :param duration: Duration of the generated video
+    :returns t: Time series, spacing is the sampling frequency, i.e. some
+    integer
+    multiple of the frame rate
+    :returns sig_mod: Frequency modulated signal; absolute value of a sine wave.
+    :returns delta_phi:
     """
 
     # Time axis
@@ -58,28 +64,39 @@ def gen_signals(fs: int, fc: int, duration: int):
     return t, sig_mod, delta_phi
 
 
-def gen_lum_signal(sig_mod, fs, fps):
-    """Generate a sequence of luminance values from sig_mod.
+def gen_sensor_signal(sig_mod, fs, fps):
+    """Generate a sequence of sensor output values from the frequency modulated
+    illumination.
 
     :param sig_mod: Series of samples of brightness values.
     :param fs: Sampling frequency
     :param fps: Video frame rate
-    :returns lum: Array with one luminance value per frame.
+    :returns sig_sensor: Array with the simulated output of the camera sensor.
 
     Downsample
     """
     samples_per_frame = fs // fps
     total_samples = len(sig_mod)
-    lum = [np.average(sig_mod[t:t+samples_per_frame]) for t in range(0, total_samples, samples_per_frame)]
+    sig_sensor = np.array([np.average(sig_mod[t:t+samples_per_frame])
+                           for t
+                           in range(0, total_samples, samples_per_frame)])
 
-    assert np.shape(lum) == (total_samples // samples_per_frame, )
-    return np.array(lum)
+    # Normalise
+    min = np.min(sig_sensor)
+    max = np.max(sig_sensor)
+    normalised = (sig_sensor - min) / (max - min)
+    #min = np.min(normalised)
+    #max = np.max(normalised)
+
+    assert np.shape(sig_sensor) == (total_samples // samples_per_frame, )
+    t_sensor = np.arange(0, duration, 1/fps)
+    return t_sensor, normalised
 
 
-def gen_raw_video_file(lum, filename, contrast=256, speed='medium'):
-    """Pipe a raw video file to STDOUT, using the luminance values in lum.
+def gen_raw_video_file(sig_sensor, filename, contrast=256, speed='medium'):
+    """Pipe a raw video file to STDOUT, using the luminance values in sig_sensor.
 
-    :param lum: Array with luminance values.
+    :param sig_sensor: Array with luminance values.
     :param filenam: Name of the file that ffmpeg generates.
     :param contrast: Contrast of the generated video file.
 
@@ -88,14 +105,14 @@ def gen_raw_video_file(lum, filename, contrast=256, speed='medium'):
 
     assert contrast >= 0 and contrast < 256
 
-    cmd = ["/usr/bin/ffmpeg", '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', '1920x1080', '-r',
-           '30', '-pix_fmt', 'rgb24', '-i', 'pipe:', '-c:v', 'libx264', '-preset', speed,
-            '-qp', '0', '-y', filename]
+    cmd = ["/usr/bin/ffmpeg", '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s',
+           '1920x1080', '-r', '30', '-pix_fmt', 'rgb24', '-i', 'pipe:', '-c:v',
+           'libx264', '-preset', speed, '-qp', '0', '-y', filename]
 
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     if p.returncode is None:
         try:
-            for l in lum:
+            for l in sig_sensor:
                 frm_array = arr.array('B', [int(l * contrast)]) * height * width * 3
                 p.stdin.write(frm_array)
         except BrokenPipeError:
@@ -105,7 +122,7 @@ def gen_raw_video_file(lum, filename, contrast=256, speed='medium'):
         print(errors)
 
 
-def plot(fs, t, delta_phi, sig_mod, lum):
+def plot(fs, fps, t, delta_phi, sig_mod, t_sensor, sig_sensor):
     """Plot the generated signal and its spectrum.
 
     :param fs: The sampling frequency; depends on grid frequency and camera
@@ -113,13 +130,13 @@ def plot(fs, t, delta_phi, sig_mod, lum):
     :param t: Time series
     :param delta_phi: time series of simulated grid frequency deviations.
     :param sig_mode: ??
-    :param lum: Time series of luminosity a camera sensor would see
+    :param sig_sensor: Time series of luminosity a camera sensor would see
     """
 
     # Compute the spectrum; subtract the average to avoid a peak at
     # a frequency of 0.
-    lum_spectrum = np.fft.fft(lum - np.mean(lum))
-    freqs = np.fft.fftfreq(len(lum), 1 / fs)
+    lum_spectrum = np.fft.fft(sig_sensor - np.mean(sig_sensor))
+    freqs = np.fft.fftfreq(len(sig_sensor), 1 / fps)
 
     fig, (ax0, ax1, ax2) = plt.subplots(3)
 
@@ -127,8 +144,9 @@ def plot(fs, t, delta_phi, sig_mod, lum):
     ax0.set_title("Frequency deviation")
     ax0.set_xlabel("Time (sec)")
 
-    ax1.plot(t[:100], lum[:100])
-    ax1.set_title("Simulated sensor signal")
+    ax1.plot(t_sensor[:11], sig_sensor[:11])
+    ax1.plot(t[:200], sig_mod[:200])
+    ax1.set_title("Simulated sensor signal / light intensity")
     ax1.set_xlabel("Time (sec)")
     ax1.set_ylabel("Amplitude")
 
@@ -168,7 +186,7 @@ if __name__ == '__main__':
     fs = args.fps * 20
 
     t, sig_mod, delta_phi = gen_signals(fs, args.grid, duration)
-    lum = gen_lum_signal(sig_mod, fs, args.fps)
+    t_sensor, sig_sensor = gen_sensor_signal(sig_mod, fs, args.fps)
     if args.plot:
-        plot(fs, t, delta_phi, sig_mod, lum)
-    gen_raw_video_file(lum, args.filename, contrast=args.contrast)
+        plot(fs, args.fps, t, delta_phi, sig_mod, t_sensor, sig_sensor)
+    gen_raw_video_file(sig_sensor, args.filename, contrast=args.contrast)
