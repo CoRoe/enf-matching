@@ -1,3 +1,23 @@
+#
+# Collection of classes that deal with the detection and processing of ENF
+# (Electirc Network Frequencies) signal in audio and video recordings.
+#
+# Copyright (C) 2024 conrad.roeber@mailbox.org
+#
+# The functions are:
+#
+# - Read an preprocess audio and video recordings. Preprocessing is slightly
+#   different for audio and video.
+#
+# - Extract the ENF component from the original signal.
+#
+# - Match the extracted ENF component against historical ENF values to
+#   determine the recording time.
+#
+# The base class is Enf; there are derived classes for different types of
+# media files and processing algorithms.
+#
+
 import wave
 import datetime
 from scipy import signal, fft
@@ -70,77 +90,6 @@ def stft(data, fs):
     return f, t, Zxx
 
 
-def enf_series_unused(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
-    """Extracts a series of ENF values from `data`, one per second.
-
-    :param data: list of signal sample amplitudes
-    :param fs: the sample rate
-    :param nominal_freq: the nominal ENF (in Hz) to look near
-    :param freq_band_size: the size of the band around the nominal value in which to look for the ENF
-    :param harmonic_n: the harmonic number to look for
-    :returns: a list of ENF values, one per second or None on error
-    """
-
-    # TODO: Return a numpy array for performance
-    print(f"enf_series: sample freq={fs}, grid freq={nominal_freq}, freq band={freq_band_size}, harmonic={harmonic_n}")
-    # downsampled_data, downsampled_fs = downsample(data, fs, 300)
-    downsampled_data, downsampled_fs = (data, fs)
-
-    locut = harmonic_n * (nominal_freq - freq_band_size)
-    hicut = harmonic_n * (nominal_freq + freq_band_size)
-
-    print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={downsampled_fs}, order=10")
-    filtered_data = butter_bandpass_filter(downsampled_data, locut, hicut,
-                                           downsampled_fs, order=10)
-
-    f, t, Zxx = stft(filtered_data, downsampled_fs)
-
-    def quadratic_interpolation(data, max_idx, bin_size):
-        """
-        :param data: Array of input data
-        :param max_idx: Index into data
-        :param bin_size:
-        :returns:
-
-        https://ccrma.stanford.edu/~jos/sasp/Quadratic_Interpolation_Spectral_Peaks.html
-        """
-        left = data[max_idx - 1]
-        center = data[max_idx]
-        right = data[max_idx + 1]
-
-        p = 0.5 * (left - right) / (left - 2 * center + right)
-        interpolated = (max_idx + p) * bin_size
-
-        return interpolated
-
-    if Zxx is not None:
-        bin_size = f[1] - f[0]
-
-        max_freqs = []
-        for spectrum in np.abs(np.transpose(Zxx)):
-            max_amp = np.amax(spectrum)
-            max_freq_idx = np.where(spectrum == max_amp)[0][0]
-
-            max_freq = quadratic_interpolation(spectrum, max_freq_idx, bin_size)
-            max_freqs.append(max_freq)
-
-    return {
-        'downsample': {
-            'new_fs': downsampled_fs,
-        },
-        'filter': {
-            'locut': locut,
-            'hicut': hicut,
-        },
-        'stft': {
-            'f': f,
-            'tablew': t,
-            'Zxx': Zxx,
-        },
-        'enf': [f/float(harmonic_n) for f in max_freqs],
-    }
-
-
 def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
     """Extracts a series of ENF values from `data`, one per second.
 
@@ -196,6 +145,47 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
         return enf
     else:
         return None
+
+
+def sel_stream_min_variation(video_streams):
+    """From a list of videao streams select the one that has the least variation.
+
+    :param video_streams: The list of viedeo stream.
+    """
+
+    assert type(video_streams) == np.ndarray and len(video_streams.shape) == 2
+
+    deltas = [np.max(video_stream) - np.min(video_stream) for video_stream in video_streams]
+    return video_streams[np.argmin(deltas)]
+
+
+def sel_stream_max_energy(streams, fs, fc, df):
+    """From a list of streams select the one that has the most energy in a given frequency band.
+
+    :param streams: The list of streams.
+    :param fs: Sampling frequency
+    :param fc: The frequency where the maximuman energy is expected.
+    :param df: The bandith
+    """
+
+    assert type(streams) == np.ndarray and len(streams.shape) == 2
+
+    min_idx = round(len(streams[0]) * (fc - df) / fs)
+    max_idx = round(len(streams[0]) * (fc + df) / fs)
+
+    per_stream_ampl = np.zeros(0)
+    for stream in streams:
+        ampl = abs(fft.fft(stream))
+        amplc = np.sum(ampl[min_idx:max_idx])
+        per_stream_ampl = np.append(per_stream_ampl, amplc)
+
+    best_idx = np.argmax(per_stream_ampl)
+    print(f"sel_stream_max_energy({fs}, {fc}, {df}) -> {best_idx}")
+
+    # debug
+    ampl = abs(fft.fft(streams[best_idx]))
+
+    return streams[best_idx]
 
 
 class Enf:
@@ -832,8 +822,10 @@ class VideoClipEnf(Enf):
                     self.height = stream['height']
                     self.width = stream['width']
                     self.clip_len_s = int(float(stream['duration']))
-                    # Someting like '30/1'
-                    self.frame_rate = int(stream['r_frame_rate'][:-2])
+                    # Someting like '30000/1001'
+                    fr = stream['r_frame_rate'].split('/')
+                    #self.frame_rate = int(stream['r_frame_rate'][:-2])
+                    self.frame_rate = round(int(fr[0])/int(fr[1]))
                     break
             else:
                 return None
@@ -1025,16 +1017,12 @@ class VideoClipEnf(Enf):
         :returns self.enf: ENF time series
         """
 
-        def bestROI(s):
-            deltas = [np.max(time_series) - np.min(time_series) for time_series in s]
-            return s[np.argmin(deltas)]
-
         print(f"makeEnf: method is {self.__method}")
         print(f"makeEnf: grid_freq={grid_freq}, nominal_freq={nominal_freq}, freq band:{freq_band_size}")
 
         # TODO: Use parameter vid_harmonic
         assert self.__method in (VideoClipEnf.method_rs, VideoClipEnf.method_gridroi)
-        data = self.data
+        data = np.array(self.data)
 
         if self.__method == VideoClipEnf.method_rs:
             # Compute the spectrum of the unprocess input data
@@ -1060,8 +1048,9 @@ class VideoClipEnf(Enf):
             locut = nominal_freq - freq_band_size
             hicut = nominal_freq + freq_band_size
 
-            assert len(np.shape(self.data)) == 2
-            data = bestROI(data)
+            assert len(np.shape(data)) == 2
+            #data = sel_stream_min_variation(data)
+            data = sel_stream_max_energy(data, self.fs, nominal_freq, freq_band_size)
 
             # Compute the spectrum of the unprocess input data
             spectrum = fft.fft(data)
