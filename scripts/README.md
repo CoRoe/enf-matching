@@ -36,3 +36,15 @@ pattern.
 - Files always have a duration of 120 seconds.
 
 - Currently simulates only global shutter, not rolling shutter.
+
+# Test Files
+
+`fm.py`was used to create the following files:
+
+| File                   | Description                                  |
+|------------------------|----------------------------------------------|
+| enf-c128-1080x1920.mp4 | File with ENF signal pattern, res. 1080x1920 |
+| enf-c128-720x1280.mp4  | File with ENF signal pattern, res. 1080x1920 |
+
+They contain only the ENF pattern defined in `fm.py` and are intended to be
+mixed to add an ENF signal to other videos.
