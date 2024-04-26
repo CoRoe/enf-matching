@@ -37,14 +37,15 @@ pattern.
 
 - Currently simulates only global shutter, not rolling shutter.
 
-# Test Files
 
-`fm.py`was used to create the following files:
+# download.sh
 
-| File                   | Description                                  |
-|------------------------|----------------------------------------------|
-| enf-c128-1080x1920.mp4 | File with ENF signal pattern, res. 1080x1920 |
-| enf-c128-720x1280.mp4  | File with ENF signal pattern, res. 1080x1920 |
+Loads two files from YouTube and adds a synthesized ENF signal to it. The
+files are placed in the ../samplemedia directory. Two versions are created
+from each original vide: One with 10% ENF, one with 20% ENF.
 
-They contain only the ENF pattern defined in `fm.py` and are intended to be
-mixed to add an ENF signal to other videos.
+The script assumes that
+
+- ffmpeg is installed;
+
+- a command to download files from YouTune ist installed.

@@ -14,8 +14,6 @@ import matplotlib.pyplot as plt
 #
 
 duration = 120              # Duration in seconds
-height = 1080
-width = 1920
 
 
 def gen_signals(fs: int, fc: int, duration: int):
@@ -93,7 +91,8 @@ def gen_sensor_signal(sig_mod, fs, fps):
     return t_sensor, normalised
 
 
-def gen_raw_video_file(sig_sensor, filename, contrast=256, speed='medium'):
+def gen_raw_video_file(sig_sensor, filename, contrast,
+                       width, height, speed='medium'):
     """Pipe a raw video file to STDOUT, using the luminance values in sig_sensor.
 
     :param sig_sensor: Array with luminance values.
@@ -105,8 +104,10 @@ def gen_raw_video_file(sig_sensor, filename, contrast=256, speed='medium'):
 
     assert contrast >= 0 and contrast < 256
 
+    vidfmt = f'{width}x{height}'
+
     cmd = ["/usr/bin/ffmpeg", '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s',
-           '1920x1080', '-r', '30', '-pix_fmt', 'rgb24', '-i', 'pipe:', '-c:v',
+           vidfmt, '-r', '30', '-pix_fmt', 'rgb24', '-i', 'pipe:', '-c:v',
            'libx264', '-preset', speed, '-qp', '0', '-y', filename]
 
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
@@ -172,12 +173,12 @@ if __name__ == '__main__':
         )
     parser.add_argument('filename', help="Output video file")
     parser.add_argument('--fps', default=30, help="Frames per second; default is 30 fps", type=int)
-    parser.add_argument('--format', default="1080x1920", help="Format of the generated video file",
-                        choices=["1080x1920"])
+    parser.add_argument('--width', default=1920, type=int, help="Width in pixels. Defaults to 1920")
+    parser.add_argument('--height', default=1080, type=int, help="Height in pixels. Defaults to 1080.")
     parser.add_argument('--grid', default=50, help="Nominal grid frequency (Hz); default is 50 Hz",
-                        choices=[50, 60])
-    parser.add_argument('--contrast', default=128,
-                        help="Contrast of the generated video {0..255}; default is 128",
+                        choices=[50, 60], type=int)
+    parser.add_argument('--contrast', default=255,
+                        help="Contrast of the generated video {0..255}; default is 255",
                         type=int)
     parser.add_argument('--plot', help="Plot spectrum instead of generating a file",
                         action='store_true')
@@ -189,4 +190,4 @@ if __name__ == '__main__':
     t_sensor, sig_sensor = gen_sensor_signal(sig_mod, fs, args.fps)
     if args.plot:
         plot(fs, args.fps, t, delta_phi, sig_mod, t_sensor, sig_sensor)
-    gen_raw_video_file(sig_sensor, args.filename, contrast=args.contrast)
+    gen_raw_video_file(sig_sensor, args.filename, args.contrast, args.width, args.height)
