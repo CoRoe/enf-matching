@@ -807,6 +807,7 @@ class VideoClipEnf(Enf):
 
 
     def getVideoProperties(self, filename):
+        # FIXME: Cannot handle 'webm' format because it codes the duration in a different way.
         # -v quiet -show_streams -show_format -print_format json
         cmd = ["/usr/bin/ffprobe", '-v', 'quiet', '-show_streams', '-show_format',
                 '-print_format', 'json', filename]
@@ -1015,12 +1016,14 @@ class VideoClipEnf(Enf):
         occurred.
         :returns self.data: 'Best' time series
         :returns self.enf: ENF time series
+
+        Processing depends on the method that has been chosen when loading the video (rolling
+        vs. global shutter).
         """
 
         print(f"makeEnf: method is {self.__method}")
         print(f"makeEnf: grid_freq={grid_freq}, nominal_freq={nominal_freq}, freq band:{freq_band_size}")
 
-        # TODO: Use parameter vid_harmonic
         assert self.__method in (VideoClipEnf.method_rs, VideoClipEnf.method_gridroi)
         data = np.array(self.data)
 
@@ -1030,8 +1033,8 @@ class VideoClipEnf(Enf):
             self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
             self.fft_ampl = np.abs(spectrum)
 
-            locut = nominal_freq
-            hicut = nominal_freq
+            locut = (grid_freq - freq_band_size) * grid_harmonic
+            hicut = (grid_freq + freq_band_size) * grid_harmonic
 
             # Apply notch filter that removes any signal components of the frame rate
             # and its harmonics.
