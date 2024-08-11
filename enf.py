@@ -713,10 +713,12 @@ class AudioClipEnf(Enf):
         # self.stft = enf_output['stft']
 
         # ENF are the ENF values
-        # TODO: Use array multiplication
-        if enf_output['enf'] is not None:
-            enf = [int(e * 1000) for e in enf_output]
-            self.enf = np.array(enf)
+        if enf_output is not None:
+            enf_output = np.array(enf_output)
+            enf_output *= 1000
+            enf_output = enf_output.astype(np.int16)
+            # enf = [int(e * 1000) for e in enf_output]
+            self.enf = enf_output
         else:
             self.enf = None
         assert self.enf is None or type(self.enf) == np.ndarray
@@ -891,7 +893,7 @@ class VideoClipEnf(Enf):
         # Array containing the average brightness of each s
         clipLuminanceArray = np.empty((0, ), dtype=np.uint16)
 
-        cmd = ['/usr/bin/ffmpeg', '-i', filename,
+        cmd = ['ffmpeg', '-i', filename,
                '-vf', 'extractplanes=y', '-f', 'rawvideo',
                 '-'
                 ]
@@ -956,7 +958,7 @@ class VideoClipEnf(Enf):
         #luminance_per_slice = [arr.array('H')] * v_slices * h_slices
         luminance_per_slice = [arr.array('H') for v in range(v_slices) for h in range(h_slices)]
 
-        cmd = ['/usr/bin/ffmpeg', '-i', filename,
+        cmd = ['ffmpeg', '-i', filename,
                '-vf', 'extractplanes=y', '-f', 'rawvideo',
                 '-'
                 ]

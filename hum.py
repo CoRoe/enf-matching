@@ -1,8 +1,11 @@
 ##!/usr/bin/python3
+import sys
+import traceback
 
 # https://www.pythonguis.com/tutorials/plotting-pyqtgraph/'
 
 import pyqtgraph as pg
+from PyQt5 import QtWidgets
 from PyQt5.QtWidgets import (
     QWidget,
     QMainWindow,
@@ -426,7 +429,7 @@ class HumView(QMainWindow):
         :param tmp fn: Temporary output file in WAV format.
         """
         cmd = [
-            "/usr/bin/ffmpeg",
+            "ffmpeg",
             "-i",
             fn,
             "-ar",
@@ -931,9 +934,14 @@ class HumController(QApplication):
     def show(self):
         self.view.show()
 
+def excepthook(exc_type, exc_value, exc_tb):
+    tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    print("Unhandled Exception Caught:\n", tb, file=sys.stderr)
+    QtWidgets.QApplication.quit()
 
 if __name__ == "__main__":
     try:
+        sys.excepthook = excepthook
         app = HumController([])
         app.show()
         app.exec()
