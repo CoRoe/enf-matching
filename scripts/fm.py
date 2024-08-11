@@ -106,21 +106,24 @@ def gen_raw_video_file(sig_sensor, filename, contrast,
 
     vidfmt = f'{width}x{height}'
 
-    cmd = ["/usr/bin/ffmpeg", '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s',
+    cmd = ["ffmpeg", '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s',
            vidfmt, '-r', '30', '-pix_fmt', 'rgb24', '-i', 'pipe:', '-c:v',
            'libx264', '-preset', speed, '-qp', '0', '-y', filename]
 
-    p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    if p.returncode is None:
-        try:
-            for l in sig_sensor:
-                frm_array = arr.array('B', [int(l * contrast)]) * height * width * 3
-                p.stdin.write(frm_array)
-        except BrokenPipeError:
-            print("Video generation aborted.")
-    else:
-        _, errors = p.communicate()
-        print(errors)
+    try:
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        if p.returncode is None:
+            try:
+                for l in sig_sensor:
+                    frm_array = arr.array('B', [int(l * contrast)]) * height * width * 3
+                    p.stdin.write(frm_array)
+            except BrokenPipeError:
+                print("Video generation aborted.")
+        else:
+            _, errors = p.communicate()
+            print(errors)
+    except FileNotFoundError as e:
+        raise Exception("Could not find ffmpeg (is it installed?)")
 
 
 def plot(fs, fps, t, delta_phi, sig_mod, t_sensor, sig_sensor):

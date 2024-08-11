@@ -4,13 +4,17 @@ This repository contains two Python applications that attempt to check for the
 presence of ENF signals in audio or video recordings and to match them against
 ENF history provided by power grid operators.
 
-The two applications `hum,py` and `flimmer.py` share a lot of code, and I may
+The two applications `hum.py` and `flimmer.py` share a lot of code, and I may
 later merge them into a single application.
 
 ## Analysis of Audio Clips: hum.py
 
 GUI application that reuses tome of the signal processing from example code
 from Robert Heaton on [github](https://github.com/robert/enf-matching).
+
+The sample (`001.wav`) used can be downloaded by executing the following script
+
+`bash scripts/download-sample-audio-files.sh`
 
 ### Run
 
