@@ -6,14 +6,26 @@ import requests
 import random
 import xml.etree.ElementTree as ET
 import pandas as pd
-import datetime
+from datetime import datetime
 import time
+import tempfile
+import argparse
 
 
 hostname = "netzfrequenzmessung.de"
 
-# the numbers 310_000 and -31 always work, but if you send too many requests, they will tell you so...
-# so this function gives a random one of the two
+description = f"""
+Query net frequency data from {hostname} and saves them to a file.
+
+Basic usage is\n
+
+    'python3 get_live_data'
+
+Press the interrupt key CTRL-C to terminate the program.
+"""
+
+# the numbers 310_000 and -31 always work, but if you send too many requests,
+# they will tell you so...  so this function gives a random one of the two
 def get_c():
     opts = [-31, 310_000]
     return str(random.choice(opts))
@@ -29,7 +41,7 @@ def get_enf_data():
     #     "phase": 276.4,
     #     "d": 7.0,
     #     "id": get_id()
-    # }
+    # }f'Query net frequency data from {hostname} and saves them to a file')
     url = "https://netzfrequenzmessung.de:9081/frequenz02c.xml?c=" + get_c()
     ip = get_ip()
     headers = {
@@ -56,10 +68,10 @@ def get_enf_data():
         d = xml.find("d").text # I don't know what d is, but it's there so it's (probably) important
 
         data = {
+            "time": datetime.strptime(time.strip(), '%d.%m.%Y %H:%M:%S'),
             "frequency": float(freq),
-            "time": datetime.datetime.strptime(time.strip(), '%d.%m.%Y %H:%M:%S'),
-            "phase": float(phase),
-            "d": float(d),
+            #"phase": float(phase),
+            #"d": float(d),
         }
 
         return data
@@ -71,10 +83,6 @@ def get_enf_data():
         return None
 
 
-def main():
-    data_loop('/tmp/enf.csv', 10)
-
-
 def data_loop(filename, limit):
     """Get the network frequency from a host and save them as CSV file.
 
@@ -83,30 +91,54 @@ def data_loop(filename, limit):
     """
     print(f"Querying ENF data from {hostname} ...")
     data = []
-    for _ in range(limit):
-        record = get_enf_data()
-        if record:
-            data.append(record)
-            time.sleep(1 - datetime.datetime.now().microsecond / 1_000_000)
-        else:
-            # If we get "too many requests", we can just wait a bit and it tends to start working.
-            time.sleep(1)
-    df = pd.DataFrame(data)
+    try:
+        for _ in range(limit):
+            record = get_enf_data()
+            if record:
+                data.append(record)
+                time.sleep(1 - datetime.now().microsecond / 1_000_000)
+            else:
+                # If we get "too many requests", we can just wait a bit and it tends to start working.
+                time.sleep(1)
+    except KeyboardInterrupt:
+        print('Interrupted')
 
-    df.index = df['time']
-    del df['time']
-    #print(df)
+    if len(data) > 0:
+        df = pd.DataFrame(data)
+        # print(df)
 
-    # Resample at 1 second interval; this will insert NaNs for missing
-    # timestamps
-    resampled = df.resample('s').mean()
+        # FIXME: Handle the case that no data were collected
+        df.index = df['time']
+        del df['time']
 
-    # Interpolate missing data
-    interpolated = resampled.interpolate()
+        # Resample at 1 second interval; this will insert NaNs for missing
+        # timestamps
+        resampled = df.resample('s').mean()
 
-    # Save to CSV file
-    interpolated.to_csv(filename)
-    print(f"... saved to {filename}")
+        # Interpolate missing data
+        interpolated = resampled.interpolate()
+
+        # Save to CSV file
+        interpolated.to_csv(filename)
+        print(f"... saved to {filename}")
+    else:
+        print("... no data collected")
+
+
+def get_default_filename():
+    now = datetime.utcnow()
+    fn = now.strftime("%Y-%m-%dT%H:%M:%S.csv")
+    tmpdir = tempfile.gettempdir()
+    return tmpdir + '/' + fn
+
+
+def main():
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument('-o', default=get_default_filename(), help='Output filename')
+    parser.add_argument('-c', '--count', type=int, default=100000)
+    args = parser.parse_args()
+
+    data_loop(args.o, args.count)
 
 
 if __name__ == "__main__":
