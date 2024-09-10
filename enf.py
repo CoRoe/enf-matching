@@ -205,7 +205,8 @@ class Enf:
         self.enfs = None
         self._timestamp = None
         self.ENFcurve = ENFcurve
-        ENFcurve.setData([], [])
+        # ENFcurve.setData([], [])
+        ENFcurve([], [])
 
 
     def _getENF(self, smoothedPreferred=True, onlyRegion=True):
@@ -320,9 +321,8 @@ class Enf:
         cumulates so the existing data have to be removed.
         """
         assert self.ENFcurve is not None
-        self.ENFcurve.setData([], [])
         timestamps = list(range(self._timestamp, self._timestamp + len(self.enf)))
-        self.ENFcurve.setData(timestamps, self.enf)
+        self.ENFcurve(timestamps, self.enf)
 
 
     def outlierSmoother(self, threshold, win):
@@ -362,10 +362,10 @@ class Enf:
 
 
     def plotENFsmoothed(self):
-        self.ENFscurve.setData([], [])
+        self.ENFscurve([], [])
         if self.enfs is not None:
             timestamps = list(range(self._timestamp, self._timestamp + len(self.enfs)))
-            self.ENFscurve.setData(timestamps, self.enfs)
+            self.ENFscurve(timestamps, self.enfs)
 
 
     def getTimestamp(self):
@@ -398,10 +398,10 @@ class GridEnf(Enf):
     elements are evenly spaced by 1 second.
     """
 
-    def __init__(self, databasePath, ENFcurve, correlationCurve):
-        assert type(ENFcurve) == pg.PlotDataItem
-        super().__init__(ENFcurve)
-        self.correlationCurve = correlationCurve
+    def __init__(self, databasePath,
+                 ENFcurveCallback, correlationCurveCallback):
+        super().__init__(ENFcurveCallback)
+        self.__correlationCurve = correlationCurveCallback
         self.databasePath = databasePath
         self.t_match = None
 
@@ -674,9 +674,8 @@ class GridEnf(Enf):
 
 
     def plotCorrelation(self):
-        self.correlationCurve.setData([], [])
         timestamps = list(range(self._timestamp, self._timestamp + len(self.corr)))
-        self.correlationCurve.setData(timestamps, self.corr)
+        self.__correlationCurve(timestamps, self.corr)
 
 
 class AudioClipEnf(Enf):
@@ -693,8 +692,8 @@ class AudioClipEnf(Enf):
         self.spectrumCurve = spectrumCurve
 
         # The curves may pre-exist; clear them
-        self.ENFscurve.setData([], [])
-        self.spectrumCurve.setData([], [])
+        self.ENFscurve([], [])
+        self.spectrumCurve([], [])
 
         self.enfs = None
         self.fft_freq = None
@@ -798,8 +797,9 @@ class AudioClipEnf(Enf):
     def plotSpectrum(self):
 
         assert self.fft_ampl is not None and self.fft_freq is not None
-        self.spectrumCurve.setData([])
-        self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)
+        # self.spectrumCurve.setData([])
+        # self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)
+        self.spectrumCurve(self.fft_freq, self.fft_ampl)
 
 
 class VideoClipEnf(Enf):

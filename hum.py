@@ -115,12 +115,12 @@ class HumView(QMainWindow):
         self.settings = Settings()
         self.databasePath = self.settings.databasePath()
 
-        self.enfAudioCurve = None     # ENF series of loaded audio file
-        self.enfAudioCurveSmothed = None
+        self.__enfAudioCurve = None     # ENF series of loaded audio file
+        self.__enfSmoothedAudioCurve = None
         self.enfAudioCurveRegion = None
-        self.clipSpectrumCurve = None # Fourier transform of loaded audio file
-        self.enfGridCurve = None      # ENF series of grid
-        self.correlationCurve = None  # Correlation of ENF series of audio
+        self.__clipSpectrumCurve = None # Fourier transform of loaded audio file
+        self.__enfGridCurve = None      # ENF series of grid
+        self.__correlationCurve = None  # Correlation of ENF series of audio
                                       # clip and grid
 
         self.__createWidgets()
@@ -161,7 +161,7 @@ class HumView(QMainWindow):
         self.clipSpectrumPlot.plotItem.setMouseEnabled(
             y=False
         )  # Only allow zoom in X-axis
-        self.clipSpectrumCurve = self.clipSpectrumPlot.plot(
+        self.__clipSpectrumCurve = self.clipSpectrumPlot.plot(
             name="WAV file spectrum", pen=HumView.spectrumCurveColour
         )
         self.tabs.addTab(self.clipSpectrumPlot, "Clip Spectrum")
@@ -175,13 +175,13 @@ class HumView(QMainWindow):
         self.enfPlot.setBackground("w")
         self.enfPlot.showGrid(x=True, y=True)
         self.enfPlot.plotItem.setMouseEnabled(y=False)  # Only allow zoom in X-axis
-        self.enfAudioCurve = self.enfPlot.plot(
+        self.__enfAudioCurve = self.enfPlot.plot(
             name="Clip ENF values", pen=HumView.ENFvalueColour
         )
-        self.enfAudioCurveSmothed = self.enfPlot.plot(
+        self.__enfSmoothedAudioCurve = self.enfPlot.plot(
             name="Smoothed clio ENF values", pen=HumView.ENFsmoothedValueColour
         )
-        self.enfGridCurve = self.enfPlot.plot(
+        self.__enfGridCurve = self.enfPlot.plot(
             name="Grid frequency history", pen=HumView.GridCurveColour
         )
         self.tabs.addTab(self.enfPlot, "ENF Series")
@@ -196,7 +196,7 @@ class HumView(QMainWindow):
         self.correlationPlot.plotItem.setMouseEnabled(
             y=False
         )  # Only allow zoom in X-axis
-        self.correlationCurve = self.correlationPlot.plot(
+        self.__correlationCurve = self.correlationPlot.plot(
             name="Correlation", pen=HumView.correlationCurveColour
         )
         self.tabs.addTab(self.correlationPlot, "Correlation")
@@ -276,7 +276,7 @@ class HumView(QMainWindow):
         for l in GridDataAccessFactory.enumLocations():
             self.l_country.addItem(l)
         self.l_country.addItem("Test")
-        self.l_country.addItem("CSV file")        
+        self.l_country.addItem("CSV file")
         grid_area.addWidget(self.l_country, 0, 1)
 
         grid_area.addWidget(QLabel("Year"), 0, 2)
@@ -457,8 +457,8 @@ class HumView(QMainWindow):
                                                   "", "all files (*)",
                                                   options=options)
         if fileName and fileName != '':
-            self.clip = AudioClipEnf(self.enfAudioCurve, self.enfAudioCurveSmothed,
-                                self.clipSpectrumCurve)
+            self.clip = AudioClipEnf(self.__plotClipEnf, self.__plotSmoothedClipEnf,
+                                self.__plotClipSpectrum)
             tmpfn = f"/tmp/hum-tmp-{os.getpid()}.wav"
             if self.__convertToWavFile(fileName, tmpfn):
                 self.clip.loadWaveFile(tmpfn)
@@ -552,7 +552,9 @@ class HumView(QMainWindow):
         location = self.l_country.currentText()
         year, month, n_months = self.__checkDateRange()
         self.grid = GridEnf(
-            self.settings.databasePath(), self.enfGridCurve, self.correlationCurve
+            self.settings.databasePath(),
+            self.__plotGridEnf,
+            self.__plotCorrelationCurve
         )
 
         if location == "Test":
@@ -742,6 +744,8 @@ class HumView(QMainWindow):
             self.enfPlot.setXRange(r[0], r[1], padding=0.5)
 
             # Plot curves
+            # TODO: Etwas von hinten durch die Brust ins Auge. Gleich die Methoden
+            # der Klasse aufrufen.
             self.clip.plotENF()
             self.clip.plotENFsmoothed()
             self.grid.plotCorrelation()
@@ -784,6 +788,30 @@ class HumView(QMainWindow):
         self.matchingProgDlg.setValue(value)
         # print(f"__matchingProgress: {value}")
 
+
+    def __plotClipSpectrum(self, freq, ampl):
+        self.__clipSpectrumCurve.setData([], [])
+        self.__clipSpectrumCurve.setData(freq, ampl)
+
+
+    def __plotClipEnf(self, t, freq):
+        self.__enfAudioCurve.setData([], [])
+        self.__enfAudioCurve.setData(t, freq)
+
+
+    def __plotSmoothedClipEnf(self, t, freq):
+        self.__enfSmoothedAudioCurve.setData([], [])
+        self.__enfSmoothedAudioCurve.setData(t, freq)
+
+
+    def __plotGridEnf(self, t, freq):
+        self.__enfGridCurve.setData([], [])
+        self.__enfGridCurve.setData(t, freq)
+
+
+    def __plotCorrelationCurve(self, x, y):
+        self.__correlationCurve.setData([], [])
+        self.__correlationCurve.setData(x, y)
 
 class ShowEnfSourcesDlg(QDialog):
 

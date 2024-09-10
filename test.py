@@ -10,10 +10,13 @@ import pytest
 import os
 import datetime
 import numpy as np
+import PyQt5 as pg
 
 from griddata import GBNationalGrid, Fingrid
+from enf import AudioClipEnf
 
 testdb = "/tmp/hum_test.sqlite3"
+wavef = '001.wav'
 
 
 @pytest.fixture
@@ -26,6 +29,34 @@ def delete_db():
 
 def progressCallback(a, b):
     pass
+
+
+def plotCallback(x, y):
+    pass
+
+
+#
+# Test set audio files; tets uses a specific file with known properties
+#
+def test_wave_file_loading():
+    """Verify that a WAV file can be loaded."""
+    clip = AudioClipEnf(plotCallback, plotCallback, plotCallback)
+    clip.loadWaveFile(wavef)
+    assert clip.getDuration() == 482
+    assert clip.sampleRate() == 8000
+
+
+def test_clip_analysis():
+    """Analyse a clip."""
+    clip = AudioClipEnf(plotCallback, plotCallback, plotCallback)
+    clip.loadWaveFile(wavef)
+
+    # Extract ENF values from the clip without removing outliers
+    clip.makeEnf(50, 0.2, 2)
+    enf = clip._getENF()
+    assert enf.shape == (482,)
+    assert np.max(enf) < 50200
+    assert np.min(enf) > 49800
 
 
 #
@@ -49,7 +80,7 @@ def not_a_test_gb_bad_date2():
     assert enf[0] is None, "Not supported year"
 
 
-def xtest_gb_caching1(delete_db):
+def test_gb_caching1(delete_db):
     g = GBNationalGrid(testdb)
     enf1 = g.getEnfSeries(2023, 12, 1, progressCallback)
     assert type(enf1) == tuple, "should return tuple o (data, timestamp)"
@@ -67,7 +98,7 @@ def xtest_gb_caching1(delete_db):
     assert dt.total_seconds() < 5, "Reading from DB should not take longer than 5 seconds"
 
 
-def xtest_gb_caching2(delete_db):
+def test_gb_caching2(delete_db):
     g = GBNationalGrid(testdb)
     enf1 = g.getEnfSeries(2015, 1, 1, progressCallback)
     assert type(enf1) == tuple, "should return tuple o (data, timestamp)"
