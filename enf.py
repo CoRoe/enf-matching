@@ -106,11 +106,14 @@ def enf_series(data, fs, nominal_freq, freq_band_size, harmonic_n=1):
     # downsampled_data, downsampled_fs = downsample(data, fs, 300)
     downsampled_data, downsampled_fs = (data, fs)
 
-    # print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={downsampled_fs}, order=10")
-    # filtered_data = butter_bandpass_filter(downsampled_data, locut, hicut,
-    #                                       downsampled_fs, order=10)
+    locut = harmonic_n * (nominal_freq - freq_band_size)
+    hicut = harmonic_n * (nominal_freq + freq_band_size)
 
-    f, t, Zxx = stft(downsampled_data, downsampled_fs)
+    print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={downsampled_fs}, order=10")
+    filtered_data = butter_bandpass_filter(downsampled_data, locut, hicut,
+                                           downsampled_fs, order=10)
+
+    f, t, Zxx = stft(filtered_data, downsampled_fs)
 
     def quadratic_interpolation(data, max_idx, bin_size):
         """
@@ -429,6 +432,21 @@ class GridEnf(Enf):
         assert type(self._timestamp == int)
 
 
+    def loadCSVFile(self, fn):
+        """Load grid ENF values from a local CSV file.
+
+        @þaram fn: The file to load the data from.
+        """
+        df = pd.read_csv(fn)
+        #print(df)
+        enf = df['frequency'].astype(float) * 1000
+        self.enf = np.array(enf)
+        t = datetime.datetime.fromisoformat(df['time'][0])
+        self._timestamp = t.strftime('%s')
+        assert type(self.enf) == np.ndarray
+        assert type(self._timestamp == int)
+
+
     def onCanceled(self):
         """Handles the 'cancel' signal from a QProgressDialog.
 
@@ -714,7 +732,8 @@ class AudioClipEnf(Enf):
 
         # ENF are the ENF values
         # TODO: Use array multiplication
-        if enf_output['enf'] is not None:
+        # if enf_output['enf'] is not None:
+        if enf_output is not None:
             enf = [int(e * 1000) for e in enf_output]
             self.enf = np.array(enf)
         else:
