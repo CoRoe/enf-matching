@@ -276,6 +276,7 @@ class HumView(QMainWindow):
         for l in GridDataAccessFactory.enumLocations():
             self.l_country.addItem(l)
         self.l_country.addItem("Test")
+        self.l_country.addItem("CSV file")        
         grid_area.addWidget(self.l_country, 0, 1)
 
         grid_area.addWidget(QLabel("Year"), 0, 2)
@@ -566,6 +567,15 @@ class HumView(QMainWindow):
             self.tabs.setCurrentIndex(1)
             self.unsetCursor()
             self.__setButtonStatus()
+        elif location == "CSV file":
+            fileName, _ = QFileDialog.getOpenFileName(self,
+                                                      "Open CSV file with grid frequencies", "",
+                                                      "All Files (*);;CSV Files (*.csv)")
+            if fileName:
+                self.setCursor(Qt.WaitCursor)
+                self.grid.loadCSVFile(fileName)
+                self.unsetCursor()
+                self.__setButtonStatus()
         else:
             if n_months < 1:
                 dlg = QMessageBox(self)
