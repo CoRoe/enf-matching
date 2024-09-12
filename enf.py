@@ -758,6 +758,33 @@ class AudioClipEnf(Enf):
         return self.fft_freq, self.fft_ampl
 
 
+    def makeSpectrogram(self, max_freq=510, segment_size_seconds=1, db=True):
+        """Creates a spectrogram of the PCM data.
+
+        :param max_freq: Maimum frequency to include into the spectorgram.
+        :param segment_size_seconds: The segment over which the FFT is computed.
+        :param db: If True, return the signal value in dB below the maximum value.
+        """
+        segment_size = int(segment_size_seconds * self.fs)
+
+        max_freq = min(max_freq, self.fs)
+
+        f, t, Sxx = signal.spectrogram(self.data, self.fs, nperseg=segment_size)
+
+        x = round(len(f) / (f[-1] / max_freq))
+        f_limited = f[:x]
+        Sxx_limited = Sxx[:x]
+        print(f"Spectrogram data shape={self.data.shape} fs={self.fs} SXX-shape={Sxx.shape}")
+
+        if db:
+            S_max = np.max(Sxx_limited)
+            S_db = 10 * np.log10(Sxx_limited / S_max)
+
+            return f_limited, t, S_db
+        else:
+            return f_limited, t, Sxx_limited
+
+
     def fileLoaded(self):
         """Check if a file has been loaded and its PCM data are vailebale."""
         return self.data is not None

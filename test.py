@@ -58,6 +58,12 @@ def test_clip_analysis():
     assert np.max(enf) < 50200
     assert np.min(enf) > 49800
 
+    # Compute spectrogram
+    f, t, Sxx = clip.makeSpectrogram()
+    assert f.shape == (510,)
+    assert t.shape == (551,)
+    assert Sxx.shape == (510, 551)
+
 
 #
 # Test set: Retrieve historical ENF values from UK National Grid and FinGrid.

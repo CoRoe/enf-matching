@@ -28,11 +28,13 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.Qt import Qt
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
+from PyQt5 import QtGui
 
 import datetime
 import os
 import subprocess
 import json
+import numpy as np
 from griddata import GridDataAccessFactory
 from enf import AudioClipEnf, GridEnf
 
@@ -149,8 +151,43 @@ class HumView(QMainWindow):
 
         self.tabs = QTabWidget()
 
+        #
+        # Spectrogram
+        #
+
+        # Create a layout window that will contain an image and histogram
+        self.spectrogram_container = pg.GraphicsLayoutWidget()
+
+        # Item for displaying image data
+        # A plot area (ViewBox + axes) for displaying the image
+        self.spectrogrsam_plot = self.spectrogram_container.addPlot()
+
+        # Item for displaying image data
+        # Interpret image data as row-major instead of col-major
+        self.img = pg.ImageItem(axisOrder='row-major')
+        #self.img = pg.ImageItem(axisOrder='col-major')
+        self.spectrogrsam_plot.addItem(self.img)
+
+        # Add a histogram with which to control the gradient of the image
+        self.hist = pg.HistogramLUTItem()
+
+        # Link the histogram to the image
+        self.hist.setImageItem(self.img)
+
+        # If you don't add the histogram to the window, it stays invisible, but I find it useful.
+        self.spectrogram_container.addItem(self.hist)
+
+        # Add labels to the axis
+        self.spectrogrsam_plot.setLabel('bottom', "Time", units='s')
+
+        # If you include the units, Pyqtgraph automatically scales the axis and adjusts the SI prefix (in this case kHz)
+        self.spectrogrsam_plot.setLabel('left', "Frequency", units='Hz')
+        self.tabs.addTab(self.spectrogram_container, "Clip Spectrogram")
+
+        #
         # Create a plot widget for the audio clip spectrum and add it to the
         # tab
+        #
         self.clipSpectrumPlot = pg.PlotWidget()
         self.clipSpectrumPlot.setLabel("left", "Amplitude")
         self.clipSpectrumPlot.setLabel("bottom", "Frequency (Hz)")
@@ -166,6 +203,7 @@ class HumView(QMainWindow):
         )
         self.tabs.addTab(self.clipSpectrumPlot, "Clip Spectrum")
 
+        #
         # Create a plot widget for the various ENF curves and add it to the
         # tab
         self.enfPlot = pg.PlotWidget(axisItems={'bottom': pg.DateAxisItem()})
@@ -470,6 +508,8 @@ class HumView(QMainWindow):
                 if self.enfAudioCurveRegion:
                     self.enfPlot.removeItem(self.enfAudioCurveRegion)
                     self.enfAudioCurveRegion = None
+
+                self.plotSpectrogram()
             else:
                 dlg = QMessageBox(self)
                 dlg.setWindowTitle("Data Error")
@@ -812,6 +852,41 @@ class HumView(QMainWindow):
     def __plotCorrelationCurve(self, x, y):
         self.__correlationCurve.setData([], [])
         self.__correlationCurve.setData(x, y)
+
+
+    def plotSpectrogram(self):
+        # https://github.com/drammock/spectrogram-tutorial/blob/main/spectrogram.ipynb
+        f, t, Sxx = self.clip.makeSpectrogram()
+
+        # Fit the min and max levels of the histogram to the data available
+        self.hist.setLevels(np.min(Sxx), np.max(Sxx))
+
+        # This gradient is roughly comparable to the gradient used by Matplotlib
+        # You can adjust it and then save it using hist.gradient.saveState()
+        # TODO: Can be moved to initialization
+        self.hist.gradient.restoreState(
+                {'mode': 'rgb',
+                 'ticks': [(0.0, (0, 128, 128, 255)),
+                           (0.5, (255, 0, 0, 255)),
+                           (1.0, (255, 255, 0, 255))
+                           ]})
+
+        # Sxx contains the amplitude for each pixel
+        self.img.setImage(Sxx)
+
+        # Scale the X and Y Axis to time and frequency (standard is pixels)
+        # scale ist veraltet: https://groups.google.com/g/PyQtGraph/c/TG-Np56bblY
+        #self.img.scale(t[-1]/np.size(Sxx, axis=1), f[-1]/np.size(Sxx, axis=0))
+        tr = QtGui.QTransform()
+        xscale = t[-1]/np.size(Sxx, axis=1)
+        yscale = f[-1]/np.size(Sxx, axis=0)
+        print(f"Scale spectorgram: img shape={Sxx.shape}, xscale={xscale}, yscale={yscale}")
+        tr.scale(xscale, yscale)
+        self.img.setTransform(tr)
+
+        # Limit panning/zooming to the spectrogram
+        self.spectrogrsam_plot.setLimits(xMin=0, xMax=t[-1], yMin=0, yMax=f[-1])
+
 
 class ShowEnfSourcesDlg(QDialog):
 
