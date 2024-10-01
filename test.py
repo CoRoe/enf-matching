@@ -13,10 +13,11 @@ import numpy as np
 import PyQt5 as pg
 
 from griddata import GBNationalGrid, Fingrid
-from enf import AudioClipEnf
+from enf import AudioClipEnf, GridEnf
 
 testdb = "/tmp/hum_test.sqlite3"
 wavef = '001.wav'
+gridwavef = '71000_ref.wav'
 
 
 @pytest.fixture
@@ -40,29 +41,54 @@ def plotCallback(x, y):
 #
 def test_wave_file_loading():
     """Verify that a WAV file can be loaded."""
-    clip = AudioClipEnf(plotCallback, plotCallback, plotCallback)
+    clip = AudioClipEnf()
     clip.loadWaveFile(wavef)
     assert clip.getDuration() == 482
     assert clip.sampleRate() == 8000
 
 
-def test_clip_analysis():
+def test_audio_clip_analysis():
     """Analyse a clip."""
-    clip = AudioClipEnf(plotCallback, plotCallback, plotCallback)
+    clip = AudioClipEnf()
     clip.loadWaveFile(wavef)
 
     # Extract ENF values from the clip without removing outliers
     clip.makeEnf(50, 0.2, 2)
-    enf = clip._getENF()
-    assert enf.shape == (482,)
-    assert np.max(enf) < 50200
-    assert np.min(enf) > 49800
+    t, enf = clip.getEnf()
+    assert enf.shape == (484,)
+    assert t.shape == (484,)
+    assert np.max(enf) <= 50186
+    assert np.min(enf) >= 49824
+    t, enfs = clip.getEnfs()
+    assert t is None and enfs is None
+
+    clip.outlierSmoother(3.0, 5)
+    t, enf = clip.getEnf()
+    assert enf.shape == (484,)
+    t, enfs = clip.getEnfs()
+    assert enfs.shape == (484,)
 
     # Compute spectrogram
     f, t, Sxx = clip.makeSpectrogram()
     assert f.shape == (510,)
     assert t.shape == (551,)
     assert Sxx.shape == (510, 551)
+
+    # The region must be defined
+    rgn = clip.getENFRegion()
+    assert rgn == (0, 482)
+
+
+def test_grid_analysis_wavef():
+    grid = GridEnf(testdb)
+    grid.loadWaveFile(gridwavef)
+    grid.makeEnf(50, 0.2, 2)
+    t, enf = grid.getEnf()
+    assert t.shape == (15366,)
+    assert enf.shape == (15366,)
+    assert np.max(enf) <= 50186
+    assert np.min(enf) >= 49810
+    assert grid.ENFavailable()
 
 
 #
