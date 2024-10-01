@@ -15,6 +15,8 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QApplication,
                              QDialogButtonBox, QProgressDialog)
 from PyQt5.Qt import Qt, QSettings, QFileInfo, QRadioButton
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
+from PyQt5 import QtGui
+import numpy as np
 
 import datetime
 from griddata import GridDataAccessFactory
@@ -93,12 +95,12 @@ class FlimmerView(QMainWindow):
         self.__qsettings = QSettings("CRO", "Flimmer")
         # self.databasePath = self.settings.databasePath()
 
-        self.enfAudioCurve = None     # ENF series of loaded audio file
-        self.enfAudioCurveSmothed = None
+        self.__enfAudioCurve = None     # ENF series of loaded audio file
+        self.__enfSmoothedAudioCurve = None
         self.enfAudioCurveRegion = None
-        self.clipSpectrumCurve = None # Fourier transform of loaded audio file
-        self.enfGridCurve = None      # ENF series of grid
-        self.correlationCurve = None  # Correlation of ENF series of audio
+        self.__clipSpectrumCurve = None # Fourier transform of loaded audio file
+        self.__enfGridCurve = None      # ENF series of grid
+        self.__correlationCurve = None  # Correlation of ENF series of audio
                                       # clip and grid
 
         self.__createWidgets()
@@ -363,19 +365,80 @@ class FlimmerView(QMainWindow):
 
         self.tabs = QTabWidget()
 
-        # Create a plot widget for the audio clip spectrum and add it to the
+        #
+        # Spectrogram
+        #
+
+        # Create a layout window that will contain an image and histogram
+        self.spectrogr_container = pg.GraphicsLayoutWidget()
+        self.spectrogr_container.setBackground('w')
+
+        # Item for displaying image data
+        # A plot area (ViewBox + axes) for displaying the image
+        self.spectrogr_plot = self.spectrogr_container.addPlot()
+
+        # Item for displaying image data
+        # Interpret image data as row-major instead of col-major
+        self.spectorgr_img = pg.ImageItem(axisOrder='row-major')
+        self.spectrogr_plot.addItem(self.spectorgr_img)
+
+        # Add a histogram with which to control the gradient of the image
+        self.spectogr_hist = pg.HistogramLUTItem()
+
+        # This gradient is roughly comparable to the gradient used by Matplotlib
+        # You can adjust it and then save it using spectogr_hist.gradient.saveState()
+        self.spectogr_hist.gradient.restoreState(
+                {'mode': 'rgb',
+                 'ticks': [(0.0, (0, 128, 128, 255)),
+                           (0.5, (255, 0, 0, 255)),
+                           (1.0, (255, 255, 0, 255))
+                           ]})
+
+        # Link the histogram to the image
+        self.spectogr_hist.setImageItem(self.spectorgr_img)
+
+        # If you don't add the histogram to the window, it stays invisible, but I find it useful.
+        self.spectrogr_container.addItem(self.spectogr_hist)
+
+        # Add labels to the axis
+        self.spectrogr_plot.setLabel('bottom', "Time", units='s')
+
+        # If you include the units, Pyqtgraph automatically scales the axis and adjusts the SI prefix (in this case kHz)
+        self.spectrogr_plot.setLabel('left', "Frequency", units='Hz')
+        self.tabs.addTab(self.spectrogr_container, "Clip Spectrogram")
+
+        #
+        # Create a plot widget for the video clip spectrum and add it to the
         # tab
+        #
         self.clipSpectrumPlot = pg.PlotWidget()
         self.clipSpectrumPlot.setLabel("left", "Amplitude")
-        self.clipSpectrumPlot.setLabel("bottom", "Frequency (Hz)")
+        self.clipSpectrumPlot.setLabel("bottom", "Frequency", unit="Hz")
         self.clipSpectrumPlot.addLegend()
         self.clipSpectrumPlot.setBackground("w")
         self.clipSpectrumPlot.showGrid(x=True, y=True)
         self.clipSpectrumPlot.setXRange(0, 1000)
-        self.clipSpectrumPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        self.clipSpectrumCurve = self.clipSpectrumPlot.plot(name="Clip spectrum",
-                                           pen=FlimmerView.spectrumCurveColour)
+        self.clipSpectrumPlot.plotItem.setMouseEnabled(
+            y=False
+        )  # Only allow zoom in X-axis
+        self.__clipSpectrumCurve = self.clipSpectrumPlot.plot(
+            name="WAV file spectrum", pen=FlimmerView.spectrumCurveColour
+        )
         self.tabs.addTab(self.clipSpectrumPlot, "Clip Spectrum")
+
+        # Create a plot widget for the audio clip spectrum and add it to the
+        # tab
+        #self.clipSpectrumPlot = pg.PlotWidget()
+        #self.clipSpectrumPlot.setLabel("left", "Amplitude")
+        #self.clipSpectrumPlot.setLabel("bottom", "Frequency (Hz)")
+        #self.clipSpectrumPlot.addLegend()
+        #self.clipSpectrumPlot.setBackground("w")
+        #self.clipSpectrumPlot.showGrid(x=True, y=True)
+        #self.clipSpectrumPlot.setXRange(0, 1000)
+        #self.clipSpectrumPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
+        #self.__clipSpectrumCurve = self.clipSpectrumPlot.plot(name="Clip spectrum",
+        #                                   pen=FlimmerView.spectrumCurveColour)
+        #self.tabs.addTab(self.clipSpectrumPlot, "Clip Spectrum")
 
         # Create a plot widget for the various ENF curves and add it to the
         # tab
@@ -386,11 +449,11 @@ class FlimmerView(QMainWindow):
         self.enfPlot.setBackground("w")
         self.enfPlot.showGrid(x=True, y=True)
         self.enfPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        self.enfAudioCurve = self.enfPlot.plot(name="Clip ENF values",
+        self.__enfAudioCurve = self.enfPlot.plot(name="Clip ENF values",
                                                pen=FlimmerView.ENFvalueColour)
-        self.enfAudioCurveSmothed = self.enfPlot.plot(name="Smoothed clio ENF values",
+        self.__enfSmoothedAudioCurve = self.enfPlot.plot(name="Smoothed clio ENF values",
                                                pen=FlimmerView.ENFsmoothedValueColour)
-        self.enfGridCurve = self.enfPlot.plot(name="Grid frequency history",
+        self.__enfGridCurve = self.enfPlot.plot(name="Grid frequency history",
                                                pen=FlimmerView.GridCurveColour)
         self.tabs.addTab(self.enfPlot, "ENF Series")
 
@@ -402,7 +465,7 @@ class FlimmerView(QMainWindow):
         self.correlationPlot.setBackground("w")
         self.correlationPlot.showGrid(x=True, y=True)
         self.correlationPlot.plotItem.setMouseEnabled(y=False) # Only allow zoom in X-axis
-        self.correlationCurve = self.correlationPlot.plot(name="Correlation",
+        self.__correlationCurve = self.correlationPlot.plot(name="Correlation",
                                                    pen=FlimmerView.correlationCurveColour)
         self.tabs.addTab(self.correlationPlot, "Correlation")
 
@@ -550,8 +613,7 @@ class FlimmerView(QMainWindow):
                                                   "*.mp4", "all files (*)",
                                                   options=options)
         if fileName and fileName != '':
-            self.clip = VideoClipEnf(self.enfAudioCurve, self.enfAudioCurveSmothed,
-                                self.clipSpectrumCurve)
+            self.clip = VideoClipEnf()
             videoProp = self.clip.getVideoProperties(fileName)
             if videoProp is not None:
                 self.e_fileName.setText(fileName)
@@ -571,6 +633,10 @@ class FlimmerView(QMainWindow):
                 if self.enfAudioCurveRegion:
                     self.enfPlot.removeItem(self.enfAudioCurveRegion)
                     self.enfAudioCurveRegion = None
+
+                # Plot video spectrum
+                self.__plotClipSpectrogram()
+                self.__plotClipSpectrum()
             else:
                 dlg = QMessageBox(self)
                 dlg.setWindowTitle("Data Error")
@@ -614,10 +680,12 @@ class FlimmerView(QMainWindow):
 
         # Plot curves. In some cases it is not possible to extract the
         # the ENF values, hence the check.
-        if self.clip.enf is not None:
-            self.clip.plotENF()
-            self.clip.plotENFsmoothed()
-        self.clip.plotSpectrum()
+        if self.clip.ENFavailable():
+            #self.clip.plotENF()
+            #self.clip.plotENFsmoothed()
+            self.__plotClipEnf()
+        #self.__plotClipSpectrogram()
+        #self.__plotClipSpectrum()
 
         # Display region; initially, it comprises the whole clip
         rgn = self.clip.getENFRegion()
@@ -666,17 +734,17 @@ class FlimmerView(QMainWindow):
 
         location = self.l_country.currentText()
         year, month, n_months = self.__checkDateRange()
-        self.grid = GridEnf(self.databasePath, self.enfGridCurve,
-                            self.correlationCurve)
+        self.grid = GridEnf(self.databasePath)
 
         if location == 'Test':
             self.setCursor(Qt.WaitCursor)
             self.grid.loadWaveFile("71000_ref.wav")
             self.grid.makeEnf(int(self.b_nominal_freq.currentText()),
                             float(self.b_band_size.value()/1000),
-                            int(self.b_harmonic.value()))
-            self.grid.plotENF()
-            self.tabs.setCurrentIndex(1)
+                            int(self.cb_gridHarmonic.currentText()))
+            #self.grid.plotENF()
+            self.__plotGridEnf()
+            self.tabs.setCurrentIndex(2)
             self.unsetCursor()
             self.__setButtonStatus()
         else:
@@ -758,13 +826,15 @@ class FlimmerView(QMainWindow):
 
                 # Plot all clip-related curves
                 print(f"Clip: {self.clip.getTimestamp()}, grid: {self.grid.getTimestamp()}")
-                self.clip.plotENF()
-                self.clip.plotENFsmoothed()
-                self.clip.plotSpectrum()
-            self.grid.plotENF()
+                self.__plotGridEnf()()
+                self.__plotClipEnf()()
+                self.clip.__plotClipSpectrum()
             self.unsetCursor()
-            self.tabs.setCurrentIndex(1)
+            self.__plotGridEnf()
+            self.tabs.setCurrentIndex(2)
         else:
+            self.unsetCursor()
+
             # Loading grid data failed
             dlg = QMessageBox(self)
             dlg.setWindowTitle("Information")
@@ -871,6 +941,53 @@ class FlimmerView(QMainWindow):
         """Called by matchXxxx method to indicate the matching progress."""
         self.matchingProgDlg.setValue(value)
         #print(f"__matchingProgress: {value}")
+
+
+    def __plotClipEnf(self):
+        t, freq = self.clip.getEnf()
+        self.__enfAudioCurve.setData([], [])
+        self.__enfAudioCurve.setData(t, freq)
+
+        t, freq = self.clip.getEnfs()
+        if freq is not None:
+            self.__enfSmoothedAudioCurve.setData([], [])
+            self.__enfSmoothedAudioCurve.setData(t, freq)
+
+
+    def __plotGridEnf(self):
+        t, freq = self.grid.getEnf()
+        self.__enfGridCurve.setData([], [])
+        self.__enfGridCurve.setData(t, freq)
+
+
+    def __plotClipSpectrum(self):
+        """Plot the spectrum of the input signal."""
+        self.__clipSpectrumCurve.setData([], [])
+        fft_freq, fft_ampl = self.clip.makeSpectrum()
+        if fft_freq is not None and fft_ampl is not None:
+            self.__clipSpectrumCurve.setData(fft_freq, fft_ampl)
+
+
+    def __plotClipSpectrogram(self):
+        # https://github.com/drammock/spectrogram-tutorial/blob/main/spectrogram.ipynb
+        f, t, Sxx = self.clip.makeSpectrogram()
+
+        # Fit the min and max levels of the histogram to the data available
+        self.spectogr_hist.setLevels(np.min(Sxx), np.max(Sxx))
+
+        # Sxx contains the amplitude for each pixel
+        self.spectorgr_img.setImage(Sxx)
+
+        # Scale the X and Y Axis to time and frequency (standard is pixels)
+        tr = QtGui.QTransform()
+        xscale = t[-1]/np.size(Sxx, axis=1)
+        yscale = f[-1]/np.size(Sxx, axis=0)
+        print(f"Scale spectorgram: spectorgr_img shape={Sxx.shape}, xscale={xscale}, yscale={yscale}")
+        tr.scale(xscale, yscale)
+        self.spectorgr_img.setTransform(tr)
+
+        # Limit panning/zooming to the spectrogram
+        self.spectrogr_plot.setLimits(xMin=0, xMax=t[-1], yMin=0, yMax=f[-1])
 
 
     def closeEvent(self, event):

@@ -200,31 +200,13 @@ class Enf:
     Clear the curve by setting empty data.
     """
 
-    def __init__(self, ENFcurve):
+    def __init__(self):
         self.enf = None
         self.enfs = None
         self._timestamp = None
-        self.ENFcurve = ENFcurve
+        #self.ENFcurve = ENFcurve
         # ENFcurve.setData([], [])
-        ENFcurve([], [])
-
-
-    def _getENF(self, smoothedPreferred=True, onlyRegion=True):
-        """Get the ENF time series.
-
-        :param smoothedPreferred: If True, the smoothed version is handed out
-        if it exists.
-        :param onlyRegion: If true then only the ENF data within the region
-        :returns: array with time series of ENF values.
-        """
-        if smoothedPreferred and self.enfs is not None:
-            enf = self.enfs
-        else:
-            enf = self.enf
-        if onlyRegion:
-            return enf[self.region[0] : self.region[1]]
-        else:
-            return enf
+        # ENFcurve([], [])
 
 
     def ENFavailable(self):
@@ -308,21 +290,22 @@ class Enf:
         # self.stft = enf_output['stft']
 
         # ENF are the ENF values
-        # TODO: Use array multiplication
-        enf = [int(e * 1000) for e in enf_output]
-        self.enf = np.array(enf)
+        self.enf = np.array(enf_output) * 1000
+        self.enf = self.enf.astype(np.uint16)
         assert type(self.enf) == np.ndarray
 
 
-    def plotENF(self):
-        """Plot the cureve of ENF values.
+    def getEnf(self):
+        timestamps = np.arange(self._timestamp, self._timestamp + len(self.enf))
+        return timestamps, self.enf
 
-        This works for ENF values in both clips and grid data. Note that ENFcurve.setData
-        cumulates so the existing data have to be removed.
-        """
-        assert self.ENFcurve is not None
-        timestamps = list(range(self._timestamp, self._timestamp + len(self.enf)))
-        self.ENFcurve(timestamps, self.enf)
+
+    def getEnfs(self):
+        if self.enfs is not None:
+            timestamps = np.arange(self._timestamp, self._timestamp + len(self.enf))
+            return timestamps, self.enfs
+        else:
+            return None, None
 
 
     def outlierSmoother(self, threshold, win):
@@ -361,7 +344,7 @@ class Enf:
         self.enfs = None
 
 
-    def plotENFsmoothed(self):
+    def plotENFsmoothed_smoothed(self):
         self.ENFscurve([], [])
         if self.enfs is not None:
             timestamps = list(range(self._timestamp, self._timestamp + len(self.enfs)))
@@ -398,10 +381,8 @@ class GridEnf(Enf):
     elements are evenly spaced by 1 second.
     """
 
-    def __init__(self, databasePath,
-                 ENFcurveCallback, correlationCurveCallback):
-        super().__init__(ENFcurveCallback)
-        self.__correlationCurve = correlationCurveCallback
+    def __init__(self, databasePath):
+        super().__init__()
         self.databasePath = databasePath
         self.t_match = None
 
@@ -460,7 +441,8 @@ class GridEnf(Enf):
         """Return the number of number of iterations. Usefull for a progress
         indicator."""
         assert type(clip) in (AudioClipEnf, VideoClipEnf)
-        n_steps = len(self.enf) - len(clip._getENF()) + 1
+        _, enf = clip.getEnf()
+        n_steps = len(self.enf) - enf.shape[0] + 1
         return n_steps
 
 
@@ -485,7 +467,8 @@ class GridEnf(Enf):
         else:
             r = False
         if r:
-            self.matchRange = (self.t_match, self.t_match + clip.getDuration())
+            _, enf = clip.getEnf()
+            self.matchRange = (self.t_match, self.t_match + enf.shape[0])
         return r
 
 
@@ -523,7 +506,7 @@ class GridEnf(Enf):
                 raise StopIteration
 
         print(f"Start Pearson correlation computation: {datetime.datetime.now()} ...")
-        clip_enf = clip._getENF()
+        _, clip_enf = clip.getEnf()
         # timestamp = clip.getTimestamp()
         print(f"Len clip_enf: {len(clip_enf)}, len(enf): {len(self.enf)}")
 
@@ -548,7 +531,6 @@ class GridEnf(Enf):
             self.t_match = self._timestamp + max_index - clip.region[0]
             self.quality = corr[max_index]
             self.corr = corr
-            # return timestamp + max_index, corr[max_index], corr
             progressCallback(n_steps)
             return True
 
@@ -590,10 +572,9 @@ class GridEnf(Enf):
         assert type(clip) in (AudioClipEnf, VideoClipEnf)
 
         print(f"Start Euclidian correlation computation: {datetime.datetime.now()} ...")
-        # timestamp = clip.getTimestamp()
 
         enf = self.enf
-        clip_enf = clip._getENF()
+        _, clip_enf = clip.getEnf()
 
         n_steps = len(enf) - len(clip_enf) + 1
         progressCallback(0)
@@ -635,7 +616,7 @@ class GridEnf(Enf):
         grid_freqs = self.enf
 
         # Get the region of interest
-        enf = clip._getENF()
+        _, enf = clip.getEnf()
         n_steps = len(grid_freqs) - len(enf) + 1
         timestamp = self._timestamp
         progressCallback(0)
@@ -659,7 +640,7 @@ class GridEnf(Enf):
 
         # Always succeeds
         return True
-        # return timestamp + max_index - self.clip_len_s//2, xcorr_norm[max_index], xcorr_norm
+
 
     def getMatchTimestamp(self):
         return self.t_match
@@ -673,11 +654,6 @@ class GridEnf(Enf):
         return self.quality
 
 
-    def plotCorrelation(self):
-        timestamps = list(range(self._timestamp, self._timestamp + len(self.corr)))
-        self.__correlationCurve(timestamps, self.corr)
-
-
 class AudioClipEnf(Enf):
     """Handle ENF (Electrical Network Frequency) values found in an audio clip.
 
@@ -686,58 +662,18 @@ class AudioClipEnf(Enf):
     to cancel the matching process.
     """
 
-    def __init__(self, ENFcurve, ENFscurve, spectrumCurve):
-        super().__init__(ENFcurve)
-        self.ENFscurve = ENFscurve
-        self.spectrumCurve = spectrumCurve
+    def __init__(self):
+        super().__init__()
 
         # The curves may pre-exist; clear them
-        self.ENFscurve([], [])
-        self.spectrumCurve([], [])
+        # self.ENFscurve([], [])
 
-        self.enfs = None
         self.fft_freq = None
         self.fft_ampl = None
         self.data = None
         self.aborted = False
         self.region = None
         self._timestamp = 0
-
-
-    def makeEnf(self, nominal_freq, freq_band_size, harmonic=1):
-        """Creates an ENF series from the sample data.
-
-        :param: nominal_freq: Nominal grid frequency in Hz; usually 50 or 60 Hz
-        :param: freq_band_size: Size of the frequency band around *nominal_freq* in Hz
-        :param: harmonic:
-
-        The method takes self.data (the samples of the audio recording) and
-        computes self.enf (the series of frequencies of the 50 or 60 Hz hum of
-        the recording.)
-
-        """
-        assert self.data is not None
-
-        self.nominal_freq = nominal_freq
-        self.freq_band_size = freq_band_size
-        self.harmonic = harmonic
-        enf_output = enf_series(self.data, self.fs, nominal_freq,
-                                freq_band_size,
-                                harmonic_n=harmonic)
-
-        # stft is the Short-Term Fourier Transfrom of the audio file, computed
-        # per second.
-        # self.stft = enf_output['stft']
-
-        # ENF are the ENF values
-        # TODO: Use array multiplication
-        # if enf_output['enf'] is not None:
-        if enf_output is not None:
-            enf = [int(e * 1000) for e in enf_output]
-            self.enf = np.array(enf)
-        else:
-            self.enf = None
-        assert self.enf is None or type(self.enf) == np.ndarray
 
 
     def makeFFT(self):
@@ -764,6 +700,9 @@ class AudioClipEnf(Enf):
         :param max_freq: Maimum frequency to include into the spectorgram.
         :param segment_size_seconds: The segment over which the FFT is computed.
         :param db: If True, return the signal value in dB below the maximum value.
+        :returns f: List of frequencies
+        :returns t: Array of times
+        :returns Sxx: Array with the
         """
         segment_size = int(segment_size_seconds * self.fs)
 
@@ -783,6 +722,18 @@ class AudioClipEnf(Enf):
             return f_limited, t, S_db
         else:
             return f_limited, t, Sxx_limited
+
+
+    def makeSpectrum(self):
+        """Compute the spectrum of the input data using FFT.
+        :Returns fft_freq: An arry of the frequencies
+        :Returns fft_ampl: An array with the absolute value of the amplitude
+        at each of the frequencies.
+        """
+        spectrum = fft.fft(self.data)
+        fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
+        fft_ampl = np.abs(spectrum)
+        return fft_freq, fft_ampl
 
 
     def fileLoaded(self):
@@ -821,7 +772,7 @@ class AudioClipEnf(Enf):
         return self.fs
 
 
-    def plotSpectrum(self):
+    def plotSpectrum_unused(self):
 
         assert self.fft_ampl is not None and self.fft_freq is not None
         # self.spectrumCurve.setData([])
@@ -834,16 +785,9 @@ class VideoClipEnf(Enf):
     method_gridroi = 0
     method_rs = 1
 
-    def __init__(self, ENFcurve, ENFscurve, spectrumCurve):
-        super().__init__(ENFcurve)
-        self.ENFscurve = ENFscurve
-        self.spectrumCurve = spectrumCurve
-
-        # The curves may pre-exist; clear them
-        self.ENFscurve.setData([], [])
-        self.spectrumCurve.setData([], [])
-
-        self.enfs = None
+    def __init__(self):
+        super().__init__()
+        #self.enfs = None
         self.fft_freq = None
         self.fft_ampl = None
         self.data = None
@@ -1045,6 +989,47 @@ class VideoClipEnf(Enf):
         self.region = (0, self.clip_len_s)
 
 
+    def makeSpectrogram(self, max_freq=510, segment_size_seconds=1, db=True):
+        """Creates a spectrogram of the PCM data.
+
+        :param max_freq: Maimum frequency to include into the spectorgram.
+        :param segment_size_seconds: The segment over which the FFT is computed.
+        :param db: If True, return the signal value in dB below the maximum value.
+        :returns f: List of frequencies
+        :returns t: Array of times
+        :returns Sxx: Array with the
+        """
+        segment_size = int(segment_size_seconds * self.fs)
+
+        max_freq = min(max_freq, self.fs)
+
+        f, t, Sxx = signal.spectrogram(self.data, self.fs, nperseg=segment_size)
+
+        x = round(len(f) / (f[-1] / max_freq))
+        f_limited = f[:x]
+        Sxx_limited = Sxx[:x]
+        print(f"Spectrogram data shape={self.data.shape} fs={self.fs} SXX-shape={Sxx.shape}")
+
+        if db:
+            S_max = np.max(Sxx_limited)
+            S_db = 10 * np.log10(Sxx_limited / S_max)
+
+            return f_limited, t, S_db
+        else:
+            return f_limited, t, Sxx_limited
+
+
+    def makeSpectrum(self):
+        """Compute the spectrum of the input data using FFT.
+        :Returns fft_freq: An arry of the frequencies
+        :Returns fft_ampl: An array with the absolute value of the amplitude
+        at each of the frequencies.
+        """
+        spectrum = fft.fft(self.data)
+        fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
+        fft_ampl = np.abs(spectrum)
+        return fft_freq, fft_ampl
+
 
     def makeEnf(self, grid_freq, nominal_freq: int, grid_harmonic, freq_band_size, vid_harmonic,
                 notchf_qual=0):
@@ -1101,11 +1086,6 @@ class VideoClipEnf(Enf):
             #data = sel_stream_min_variation(data)
             data = sel_stream_max_energy(data, self.fs, nominal_freq, freq_band_size)
 
-            # Compute the spectrum of the unprocess input data
-            spectrum = fft.fft(data)
-            self.fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
-            self.fft_ampl = np.abs(spectrum)
-
             # Apply a band-pass Butterworth filter that leaves only the frequency range
             # where the ENF is expected:
             print(f"Band pass: locut={locut}, hicut={hicut}, sample freq={self.fs}, order=10")
@@ -1134,7 +1114,7 @@ class VideoClipEnf(Enf):
             self.ENFscurve.setData(timestamps, self.enfs)
 
 
-    def plotSpectrum(self):
+    def plotSpectrum_unused(self):
 
         assert self.fft_ampl is not None and self.fft_freq is not None
         self.spectrumCurve.setData([])

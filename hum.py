@@ -156,33 +156,42 @@ class HumView(QMainWindow):
         #
 
         # Create a layout window that will contain an image and histogram
-        self.spectrogram_container = pg.GraphicsLayoutWidget()
+        self.spectrogr_container = pg.GraphicsLayoutWidget()
+        self.spectrogr_container.setBackground('w')
 
         # Item for displaying image data
         # A plot area (ViewBox + axes) for displaying the image
-        self.spectrogrsam_plot = self.spectrogram_container.addPlot()
+        self.spectrogr_plot = self.spectrogr_container.addPlot()
 
         # Item for displaying image data
         # Interpret image data as row-major instead of col-major
-        self.img = pg.ImageItem(axisOrder='row-major')
-        #self.img = pg.ImageItem(axisOrder='col-major')
-        self.spectrogrsam_plot.addItem(self.img)
+        self.spectorgr_img = pg.ImageItem(axisOrder='row-major')
+        self.spectrogr_plot.addItem(self.spectorgr_img)
 
         # Add a histogram with which to control the gradient of the image
-        self.hist = pg.HistogramLUTItem()
+        self.spectogr_hist = pg.HistogramLUTItem()
+
+        # This gradient is roughly comparable to the gradient used by Matplotlib
+        # You can adjust it and then save it using spectogr_hist.gradient.saveState()
+        self.spectogr_hist.gradient.restoreState(
+                {'mode': 'rgb',
+                 'ticks': [(0.0, (0, 128, 128, 255)),
+                           (0.5, (255, 0, 0, 255)),
+                           (1.0, (255, 255, 0, 255))
+                           ]})
 
         # Link the histogram to the image
-        self.hist.setImageItem(self.img)
+        self.spectogr_hist.setImageItem(self.spectorgr_img)
 
         # If you don't add the histogram to the window, it stays invisible, but I find it useful.
-        self.spectrogram_container.addItem(self.hist)
+        self.spectrogr_container.addItem(self.spectogr_hist)
 
         # Add labels to the axis
-        self.spectrogrsam_plot.setLabel('bottom', "Time", units='s')
+        self.spectrogr_plot.setLabel('bottom', "Time", units='s')
 
         # If you include the units, Pyqtgraph automatically scales the axis and adjusts the SI prefix (in this case kHz)
-        self.spectrogrsam_plot.setLabel('left', "Frequency", units='Hz')
-        self.tabs.addTab(self.spectrogram_container, "Clip Spectrogram")
+        self.spectrogr_plot.setLabel('left', "Frequency", units='Hz')
+        self.tabs.addTab(self.spectrogr_container, "Clip Spectrogram")
 
         #
         # Create a plot widget for the audio clip spectrum and add it to the
@@ -190,7 +199,7 @@ class HumView(QMainWindow):
         #
         self.clipSpectrumPlot = pg.PlotWidget()
         self.clipSpectrumPlot.setLabel("left", "Amplitude")
-        self.clipSpectrumPlot.setLabel("bottom", "Frequency (Hz)")
+        self.clipSpectrumPlot.setLabel("bottom", "Frequency", unit="Hz")
         self.clipSpectrumPlot.addLegend()
         self.clipSpectrumPlot.setBackground("w")
         self.clipSpectrumPlot.showGrid(x=True, y=True)
@@ -495,8 +504,7 @@ class HumView(QMainWindow):
                                                   "", "all files (*)",
                                                   options=options)
         if fileName and fileName != '':
-            self.clip = AudioClipEnf(self.__plotClipEnf, self.__plotSmoothedClipEnf,
-                                self.__plotClipSpectrum)
+            self.clip = AudioClipEnf()
             tmpfn = f"/tmp/hum-tmp-{os.getpid()}.wav"
             if self.__convertToWavFile(fileName, tmpfn):
                 self.clip.loadWaveFile(tmpfn)
@@ -509,7 +517,8 @@ class HumView(QMainWindow):
                     self.enfPlot.removeItem(self.enfAudioCurveRegion)
                     self.enfAudioCurveRegion = None
 
-                self.plotSpectrogram()
+                self.__plotClipSpectrogram()
+                self.__plotClipSpectrum()
             else:
                 dlg = QMessageBox(self)
                 dlg.setWindowTitle("Data Error")
@@ -554,16 +563,14 @@ class HumView(QMainWindow):
         self.enfPlot.setXRange(t, t + self.clip.clip_len_s)
 
         # Plot curves
-        self.clip.plotENF()
-        self.clip.plotENFsmoothed()
-        self.clip.plotSpectrum()
+        self.__plotClipEnf()
 
         # Display region; initially, it comprises the whole clip
         rgn = self.clip.getENFRegion()
         self.__setRegion(rgn)
 
         self.unsetCursor()
-        self.tabs.setCurrentIndex(1)
+        self.tabs.setCurrentIndex(2)
         self.__setButtonStatus()
 
 
@@ -592,9 +599,7 @@ class HumView(QMainWindow):
         location = self.l_country.currentText()
         year, month, n_months = self.__checkDateRange()
         self.grid = GridEnf(
-            self.settings.databasePath(),
-            self.__plotGridEnf,
-            self.__plotCorrelationCurve
+            self.settings.databasePath()
         )
 
         if location == "Test":
@@ -605,8 +610,8 @@ class HumView(QMainWindow):
                 float(self.b_band_size.value() / 1000),
                 int(self.b_harmonic.value()),
             )
-            self.grid.plotENF()
-            self.tabs.setCurrentIndex(1)
+            self.__plotGridEnf()
+            self.tabs.setCurrentIndex(2)
             self.unsetCursor()
             self.__setButtonStatus()
         elif location == "CSV file":
@@ -709,10 +714,11 @@ class HumView(QMainWindow):
                 print(f"Clip: {self.clip.getTimestamp()}, grid: {self.grid.getTimestamp()}")
                 self.clip.plotENF()
                 self.clip.plotENFsmoothed()
-                self.clip.plotSpectrum()
-            self.grid.plotENF()
+                #self.clip.__plotClipSpectrum()
+            #self.grid.plotENF()
+            self.__plotGridEnf()
             self.unsetCursor()
-            self.tabs.setCurrentIndex(1)
+            self.tabs.setCurrentIndex(2)
         else:
             # Loading grid data failed
             dlg = QMessageBox(self)
@@ -721,6 +727,7 @@ class HumView(QMainWindow):
             dlg.setText("Could not get ENF values")
             dlg.exec()
         self.__setButtonStatus()
+
 
     @pyqtSlot(str, int)
     def __gridHistoryLoadingProgress(self, hint, progress):
@@ -786,10 +793,12 @@ class HumView(QMainWindow):
             # Plot curves
             # TODO: Etwas von hinten durch die Brust ins Auge. Gleich die Methoden
             # der Klasse aufrufen.
-            self.clip.plotENF()
-            self.clip.plotENFsmoothed()
-            self.grid.plotCorrelation()
-            self.tabs.setCurrentIndex(1)
+            # self.clip.plotENF()
+            self.__plotClipEnf()
+            #self.clip.plotENFsmoothed()
+            #self.grid.plotCorrelation()
+            #self.__plotCorrelationCurve(x, y)
+            self.tabs.setCurrentIndex(2)
 
             # Set text fields
             self.e_offset.setText(str(t))
@@ -829,22 +838,19 @@ class HumView(QMainWindow):
         # print(f"__matchingProgress: {value}")
 
 
-    def __plotClipSpectrum(self, freq, ampl):
-        self.__clipSpectrumCurve.setData([], [])
-        self.__clipSpectrumCurve.setData(freq, ampl)
-
-
-    def __plotClipEnf(self, t, freq):
+    def __plotClipEnf(self):
+        t, freq = self.clip.getEnf()
         self.__enfAudioCurve.setData([], [])
         self.__enfAudioCurve.setData(t, freq)
 
+        t, freq = self.clip.getEnfs()
+        if freq is not None:
+            self.__enfSmoothedAudioCurve.setData([], [])
+            self.__enfSmoothedAudioCurve.setData(t, freq)
 
-    def __plotSmoothedClipEnf(self, t, freq):
-        self.__enfSmoothedAudioCurve.setData([], [])
-        self.__enfSmoothedAudioCurve.setData(t, freq)
 
-
-    def __plotGridEnf(self, t, freq):
+    def __plotGridEnf(self):
+        t, freq = self.grid.getEnf()
         self.__enfGridCurve.setData([], [])
         self.__enfGridCurve.setData(t, freq)
 
@@ -854,38 +860,34 @@ class HumView(QMainWindow):
         self.__correlationCurve.setData(x, y)
 
 
-    def plotSpectrogram(self):
+    def __plotClipSpectrogram(self):
         # https://github.com/drammock/spectrogram-tutorial/blob/main/spectrogram.ipynb
         f, t, Sxx = self.clip.makeSpectrogram()
 
         # Fit the min and max levels of the histogram to the data available
-        self.hist.setLevels(np.min(Sxx), np.max(Sxx))
-
-        # This gradient is roughly comparable to the gradient used by Matplotlib
-        # You can adjust it and then save it using hist.gradient.saveState()
-        # TODO: Can be moved to initialization
-        self.hist.gradient.restoreState(
-                {'mode': 'rgb',
-                 'ticks': [(0.0, (0, 128, 128, 255)),
-                           (0.5, (255, 0, 0, 255)),
-                           (1.0, (255, 255, 0, 255))
-                           ]})
+        self.spectogr_hist.setLevels(np.min(Sxx), np.max(Sxx))
 
         # Sxx contains the amplitude for each pixel
-        self.img.setImage(Sxx)
+        self.spectorgr_img.setImage(Sxx)
 
         # Scale the X and Y Axis to time and frequency (standard is pixels)
-        # scale ist veraltet: https://groups.google.com/g/PyQtGraph/c/TG-Np56bblY
-        #self.img.scale(t[-1]/np.size(Sxx, axis=1), f[-1]/np.size(Sxx, axis=0))
         tr = QtGui.QTransform()
         xscale = t[-1]/np.size(Sxx, axis=1)
         yscale = f[-1]/np.size(Sxx, axis=0)
-        print(f"Scale spectorgram: img shape={Sxx.shape}, xscale={xscale}, yscale={yscale}")
+        print(f"Scale spectorgram: spectorgr_img shape={Sxx.shape}, xscale={xscale}, yscale={yscale}")
         tr.scale(xscale, yscale)
-        self.img.setTransform(tr)
+        self.spectorgr_img.setTransform(tr)
 
         # Limit panning/zooming to the spectrogram
-        self.spectrogrsam_plot.setLimits(xMin=0, xMax=t[-1], yMin=0, yMax=f[-1])
+        self.spectrogr_plot.setLimits(xMin=0, xMax=t[-1], yMin=0, yMax=f[-1])
+
+
+    def __plotClipSpectrum(self):
+        """Plot the spectrum of the input signal."""
+        self.__clipSpectrumCurve.setData([], [])
+        fft_freq, fft_ampl = self.clip.makeSpectrum()
+        if fft_freq is not None and fft_ampl is not None:
+            self.__clipSpectrumCurve.setData(fft_freq, fft_ampl)
 
 
 class ShowEnfSourcesDlg(QDialog):
