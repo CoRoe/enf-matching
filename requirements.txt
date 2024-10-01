@@ -7,7 +7,7 @@ DateTime==5.5
 idna==3.7
 inflate64==1.0.0
 multivolumefile==0.2.3
-numpy==1.26.4
+numpy==1.24.0
 pandas==2.2.2
 psutil==5.9.8
 py7zr==0.21.0
