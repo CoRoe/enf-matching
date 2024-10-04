@@ -37,6 +37,18 @@ pattern.
 
 - Currently simulates only global shutter, not rolling shutter.
 
+# rs_sim.py
+
+The scripts simulates a mains-powered light source and the processing by CMOS
+image sensor; CMOS sensors have the characteristic that scan lines are exposed
+sequentially; so each row is exposed at a slightly different point in time.
+The grid frequency and the frame rate interfere with each other.
+
+The mechanism is called *rolling shutter* although no machanically moving
+shutter is used.
+
+The script simulates a system containing a light source and a sensor and plots
+the simulated waveform and its spectrum.
 
 # download.sh
 
