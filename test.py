@@ -10,14 +10,15 @@ import pytest
 import os
 import datetime
 import numpy as np
-import PyQt5 as pg
+#import PyQt5 as pg
 
 from griddata import GBNationalGrid, Fingrid
-from enf import AudioClipEnf, GridEnf
+from enf import AudioClipEnf, GridEnf, VideoClipEnf
 
 testdb = "/tmp/hum_test.sqlite3"
 wavef = '001.wav'
 gridwavef = '71000_ref.wav'
+videoclip_rs = 'fluorescent.mp4'
 
 
 @pytest.fixture
@@ -37,20 +38,29 @@ def plotCallback(x, y):
 
 
 #
+# Test set video files
+#
+def test_video_clip_rs():
+    clip = VideoClipEnf()
+    clip.getVideoProperties(videoclip_rs)
+    clip.loadVideoFileRollingShutter(videoclip_rs, 25)
+
+
+#
 # Test set audio files; tets uses a specific file with known properties
 #
 def test_wave_file_loading():
     """Verify that a WAV file can be loaded."""
     clip = AudioClipEnf()
-    clip.loadWaveFile(wavef)
+    clip.loadAudioFile(wavef)
     assert clip.getDuration() == 482
-    assert clip.sampleRate() == 8000
+    assert clip.sampleRate() == 400
 
 
 def test_audio_clip_analysis():
     """Analyse a clip."""
     clip = AudioClipEnf()
-    clip.loadWaveFile(wavef)
+    clip.loadAudioFile(wavef, fs=8000)
 
     # Extract ENF values from the clip without removing outliers
     clip.makeEnf(50, 0.2, 2)
@@ -81,7 +91,7 @@ def test_audio_clip_analysis():
 
 def test_grid_analysis_wavef():
     grid = GridEnf(testdb)
-    grid.loadWaveFile(gridwavef)
+    grid.loadAudioFile(gridwavef)
     grid.makeEnf(50, 0.2, 2)
     t, enf = grid.getEnf()
     assert t.shape == (15366,)

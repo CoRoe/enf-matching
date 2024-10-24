@@ -165,8 +165,8 @@ class HumView(QMainWindow):
 
         # Item for displaying image data
         # Interpret image data as row-major instead of col-major
-        self.spectorgr_img = pg.ImageItem(axisOrder='row-major')
-        self.spectrogr_plot.addItem(self.spectorgr_img)
+        self.spectrogr_img = pg.ImageItem(axisOrder='row-major')
+        self.spectrogr_plot.addItem(self.spectrogr_img)
 
         # Add a histogram with which to control the gradient of the image
         self.spectogr_hist = pg.HistogramLUTItem()
@@ -181,7 +181,7 @@ class HumView(QMainWindow):
                            ]})
 
         # Link the histogram to the image
-        self.spectogr_hist.setImageItem(self.spectorgr_img)
+        self.spectogr_hist.setImageItem(self.spectrogr_img)
 
         # If you don't add the histogram to the window, it stays invisible, but I find it useful.
         self.spectrogr_container.addItem(self.spectogr_hist)
@@ -498,16 +498,15 @@ class HumView(QMainWindow):
         """Button to open a multimedia file clicked."""
         self.setCursor(Qt.WaitCursor)
 
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
-        fileName, x = QFileDialog.getOpenFileName(self,"Open audio or video file",
-                                                  "", "all files (*)",
-                                                  options=options)
-        if fileName and fileName != '':
+        dlg = QFileDialog(self)
+        dlg.setNameFilters(["Audio (*.wav *.mp3 *.opus *.aac)", "All (*)"])
+        dlg.setFileMode(QFileDialog.FileMode.ExistingFiles)
+
+        if dlg.exec():
+            fileNames = dlg.selectedFiles()
+            fileName = fileNames[0]
             self.clip = AudioClipEnf()
-            tmpfn = f"/tmp/hum-tmp-{os.getpid()}.wav"
-            if self.__convertToWavFile(fileName, tmpfn):
-                self.clip.loadWaveFile(tmpfn)
+            if self.clip.loadAudioFile(fileName, fs=8000):
                 self.e_fileName.setText(fileName)
                 self.e_duration.setText(str(self.clip.getDuration()))
                 self.e_sampleRate.setText(str(self.clip.sampleRate()))
@@ -528,10 +527,6 @@ class HumView(QMainWindow):
                     " video or audio file."
                 )
                 dlg.exec()
-            try:
-                os.remove(tmpfn)
-            except:
-                pass
 
         self.unsetCursor()
         self.__setButtonStatus()
@@ -604,7 +599,7 @@ class HumView(QMainWindow):
 
         if location == "Test":
             self.setCursor(Qt.WaitCursor)
-            self.grid.loadWaveFile("71000_ref.wav")
+            self.grid.loadAudioFile("71000_ref.wav")
             self.grid.makeEnf(
                 int(self.b_nominal_freq.currentText()),
                 float(self.b_band_size.value() / 1000),
@@ -868,15 +863,15 @@ class HumView(QMainWindow):
         self.spectogr_hist.setLevels(np.min(Sxx), np.max(Sxx))
 
         # Sxx contains the amplitude for each pixel
-        self.spectorgr_img.setImage(Sxx)
+        self.spectrogr_img.setImage(Sxx)
 
         # Scale the X and Y Axis to time and frequency (standard is pixels)
         tr = QtGui.QTransform()
         xscale = t[-1]/np.size(Sxx, axis=1)
         yscale = f[-1]/np.size(Sxx, axis=0)
-        print(f"Scale spectorgram: spectorgr_img shape={Sxx.shape}, xscale={xscale}, yscale={yscale}")
+        print(f"Scale spectorgram: spectrogr_img shape={Sxx.shape}, xscale={xscale}, yscale={yscale}")
         tr.scale(xscale, yscale)
-        self.spectorgr_img.setTransform(tr)
+        self.spectrogr_img.setTransform(tr)
 
         # Limit panning/zooming to the spectrogram
         self.spectrogr_plot.setLimits(xMin=0, xMax=t[-1], yMin=0, yMax=f[-1])

@@ -18,12 +18,14 @@
 # media files and processing algorithms.
 #
 
+import sys
+import struct
 import wave
 import datetime
 from scipy import signal, fft
 import numpy as np
 import pandas as pd
-import pyqtgraph as pg
+#import pyqtgraph as pg
 import subprocess
 import json
 import array as arr
@@ -215,7 +217,7 @@ class Enf:
         return self.enf is not None
 
 
-    def loadWaveFile(self, fpath):
+    def loadWaveFile_unused(self, fpath):
         """Loads wave_buf .wav file and computes ENF and SFT.
 
         :param fpath: the path to __load the file from rate)
@@ -262,6 +264,69 @@ class Enf:
 
         # Set the region to the whole clip
         self.region = (0, self.clip_len_s)
+
+
+    def loadAudioFile(self, fpath, fs=400):
+        """Load an audio file into a Numpy array.
+
+        :param fpath: the path of the file
+        :param fs: scanning frequency
+
+        On exit, self.data is an Numpy array with the samples of the loaded
+        audio recording ('clip').
+        """
+        # Determin byte order so and set ffmpeg parameters accordingly
+        bo = sys.byteorder
+        if bo == 'little':
+            audiofmt = 's32le'
+        else:
+            audiofmt = 's32be'
+
+        # Set maximum duration and buffer size
+        maxlen_s = 60 * 60
+        bufsize = maxlen_s * fs * 4
+
+        #
+        # ffmpeg parameters:
+        #
+        # -vn blocks all video streams of a file
+        # -acodec pcm_s32le Set the audio codec to pcm_s32le
+        # -ar 300 Set the sampling frequency
+        # -ac Set number of audio channels
+        # -f s16le output format
+        #
+        cmd = ['/usr/bin/ffmpeg', '-i', fpath,
+               '-vn', '-acodec', 'pcm_s32le', '-ar', str(fs), '-ac', '1',
+               '-f', audiofmt,
+                '-'
+                ]
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None, bufsize=bufsize)
+            raw_audio, err = proc.communicate()
+            if proc.returncode == 0:
+                print(f"Read {len(raw_audio)} bytes of audio data.")
+                self.data = np.frombuffer(raw_audio, dtype=np.int32)
+                self.fs = fs
+                self.n_frames = self.data.shape[0]
+                self.clip_len_s = self.n_frames // self.fs
+                print(f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds")
+
+                # Check that endianness is handled correctly
+                b = struct.unpack('<i', raw_audio[:4])
+                assert b[0] == self.data[0]
+
+                self._timestamp = 0
+
+                # Set the region to the whole clip
+                self.region = (0, self.clip_len_s)
+                return True
+            else:
+                return False
+        except Exception as e:
+            print(e)
+
+        else:
+            return False
 
 
     def makeEnf(self, nominal_freq, freq_band_size, harmonic):
@@ -772,14 +837,6 @@ class AudioClipEnf(Enf):
         return self.fs
 
 
-    def plotSpectrum_unused(self):
-
-        assert self.fft_ampl is not None and self.fft_freq is not None
-        # self.spectrumCurve.setData([])
-        # self.spectrumCurve.setData(self.fft_freq, self.fft_ampl)
-        self.spectrumCurve(self.fft_freq, self.fft_ampl)
-
-
 class VideoClipEnf(Enf):
 
     method_gridroi = 0
@@ -1025,7 +1082,7 @@ class VideoClipEnf(Enf):
         :Returns fft_ampl: An array with the absolute value of the amplitude
         at each of the frequencies.
         """
-        spectrum = fft.fft(self.data)
+        spectrum = fft.fft(self.data - np.mean(self.data))
         fft_freq = fft.fftfreq(len(spectrum), 1.0 / self.fs)
         fft_ampl = np.abs(spectrum)
         return fft_freq, fft_ampl
