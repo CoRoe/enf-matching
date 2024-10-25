@@ -25,7 +25,6 @@ import datetime
 from scipy import signal, fft
 import numpy as np
 import pandas as pd
-#import pyqtgraph as pg
 import subprocess
 import json
 import array as arr
@@ -215,55 +214,6 @@ class Enf:
         """Check if ENF value are available. The smoothed data may
         or may not be availble."""
         return self.enf is not None
-
-
-    def loadWaveFile_unused(self, fpath):
-        """Loads wave_buf .wav file and computes ENF and SFT.
-
-        :param fpath: the path to __load the file from rate)
-
-        On exit, self.data is an Numpy array with the samples of the loaded
-        audio recording ('clip').  If the WAV file has a sampling rate above
-        8,000 Hz it is decimated down to 8,000 Hz. The function throws an
-        exception if the original sampling rate is not a multiple of 8,000.
-
-        """
-        # TODO: Check big and low endianness
-        with wave.open(fpath) as wav_f:
-            self.fs = wav_f.getframerate()
-            self.n_frames = wav_f.getnframes()
-            if self.fs > 8000:
-                ds_factor = int(self.fs / 8000)
-                assert ds_factor * 8000 == self.fs
-                self.data = None
-
-                # Read chunks, downsample them
-                wav_buf = wav_f.readframes(1000000)
-                while len(wav_buf) > 0:
-                    # print(len(wav_buf))
-                    nw = signal.decimate(
-                        np.frombuffer(wav_buf, dtype=np.int16), ds_factor
-                    )
-                    # print("After decimation:", len(nw))
-                    if self.data is not None:
-                        self.data = np.append(self.data, nw)
-                    else:
-                        self.data = nw
-                    wav_buf = wav_f.readframes(1000000)
-                self.fs = int(self.fs / ds_factor)
-            else:
-                # Read entire file into buffer
-                wav_buf = wav_f.readframes(wav_f.getnframes())
-                self.data = np.frombuffer(wav_buf, dtype=np.int16)
-
-            assert type(self.data) == np.ndarray
-            self.clip_len_s = int(self.n_frames / self.fs)
-            print(f"File {fpath}: Sample frequency {self.fs} Hz, duration {self.clip_len_s} seconds")
-
-        self._timestamp = 0
-
-        # Set the region to the whole clip
-        self.region = (0, self.clip_len_s)
 
 
     def loadAudioFile(self, fpath, fs=400):
