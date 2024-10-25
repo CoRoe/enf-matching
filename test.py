@@ -10,7 +10,6 @@ import pytest
 import os
 import datetime
 import numpy as np
-#import PyQt5 as pg
 
 from griddata import GBNationalGrid, Fingrid
 from enf import AudioClipEnf, GridEnf, VideoClipEnf
@@ -49,7 +48,7 @@ def test_video_clip_rs():
 #
 # Test set audio files; tets uses a specific file with known properties
 #
-def test_wave_file_loading():
+def test_audio_file_loading():
     """Verify that a WAV file can be loaded."""
     clip = AudioClipEnf()
     clip.loadAudioFile(wavef)
