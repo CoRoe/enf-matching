@@ -4,8 +4,36 @@ This repository contains two Python applications that attempt to check for the
 presence of ENF signals in audio or video recordings and to match them against
 ENF history provided by power grid operators.
 
-The two applications `hum,py` and `flimmer.py` share a lot of code, and I may
-later merge them into a single application.
+The two applications `hum.py` and `flimmer.py` share a lot of code, and I may
+later merge them into a single application. Note that flimmer.py is still at
+an experimental stage.
+
+### Using Poetry Version and Dependency Management
+
+Poetry is documented here: https://python-poetry.org/docs/basic-usage/.
+
+The repository contains configuration files for setting up a Python virtual
+environment with Poetry.
+
+To set up the Python virtual environment for this project, use:
+
+```
+poetry init
+```
+
+This stept has to be performend only only once. It will install the Python
+interpreter and any required Python modules somewhere in your home
+directory. On Ubuntu systems, the path is `~/.cache/pypoetry/`.
+
+To run the Python applications, you should activate the virtual Python
+environment:
+
+```
+poetry shell
+```
+
+The shell prompt will change to `(enf-matching-py3.10)`or similar to remind
+you that the virtual environment ist active.
 
 ## Analysis of Audio Clips: hum.py
 
@@ -248,7 +276,7 @@ Frequency changes in test video clip are recognised.
 There a some unit test cases for `griddata.py`. To run them:
 
 ```
-pytest-3 test.py
+make test
 ```
 
 ## See also
