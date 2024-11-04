@@ -17,7 +17,7 @@ from enf import AudioClipEnf, GridEnf, VideoClipEnf
 testdb = "/tmp/hum_test.sqlite3"
 wavef = 'samplemedia/001.wav'
 gridwavef = 'samplemedia/71000_ref.wav'
-videoclip_rs = 'fluorescent.mp4'
+videoclip_rs = 'samplemedia/fluorescent.mp4'
 
 
 @pytest.fixture
