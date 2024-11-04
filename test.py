@@ -15,8 +15,8 @@ from griddata import GBNationalGrid, Fingrid
 from enf import AudioClipEnf, GridEnf, VideoClipEnf
 
 testdb = "/tmp/hum_test.sqlite3"
-wavef = '001.wav'
-gridwavef = '71000_ref.wav'
+wavef = 'samplemedia/001.wav'
+gridwavef = 'samplemedia/71000_ref.wav'
 videoclip_rs = 'fluorescent.mp4'
 
 

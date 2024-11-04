@@ -20,7 +20,7 @@ binary:
 		--clean hum.py
 
 test:
-	pytest-3 test.py
+	pytest-3 -v test.py
 
 clean:
 	rm -r dist build pyvenv.cfg AppDir

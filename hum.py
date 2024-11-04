@@ -599,7 +599,7 @@ class HumView(QMainWindow):
 
         if location == "Test":
             self.setCursor(Qt.WaitCursor)
-            self.grid.loadAudioFile("71000_ref.wav")
+            self.grid.loadAudioFile("samplemedia/71000_ref.wav")
             self.grid.makeEnf(
                 int(self.b_nominal_freq.currentText()),
                 float(self.b_band_size.value() / 1000),

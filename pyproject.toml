@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "enf-matching"
+version = "0.1.0"
+description = ""
+authors = ["Conrad <conrad.roeber@mailbox.org>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pyqt5 = "^5.15.11"
+pyqtgraph = "^0.13.7"
+requests = "^2.32.3"
+bs4 = "^0.0.2"
+py7zr = "^0.22.0"
+scipy = "^1.14.1"
+pandas = "^2.2.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
