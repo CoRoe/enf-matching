@@ -438,7 +438,7 @@ class GridEnf(Enf):
         enf = df['frequency'].astype(float) * 1000
         self.enf = np.array(enf)
         t = datetime.datetime.fromisoformat(df['time'][0])
-        self._timestamp = t.strftime('%s')
+        self._timestamp = int(t.strftime('%s'))
         assert type(self.enf) == np.ndarray
         assert type(self._timestamp == int)
 
